@@ -63,6 +63,7 @@
 #include "DolphinSwitch/CoverDownload.h"
 #include "DolphinSwitch/DolphinTools.h"
 #include "DolphinSwitch/Forwarder.h"
+#include "DolphinSwitch/PerformanceManager.h"
 #include "DolphinSwitch/Storage.h"
 #include "DolphinSwitch/SystemLanguage.h"
 #include "DolphinSwitch/UiAudio.h"
@@ -826,6 +827,13 @@ static constexpr SettingHelpEntry SETTING_HELP[] = {
     {"Lossless.dll", "Required component",
      "Shows whether the LSFG runtime is installed in Dolphin's frame-generation folder. Frame generation cannot start while it is missing."},
 
+    {"Host clock profile", "Switch performance",
+     "Selects explicit CPU, GPU and memory targets for this game session. Stock baseline uses official clocks; the other profiles require sys-clk and restore your prior state on exit."},
+    {"Performance metrics log", "Benchmark logging",
+     "Writes emulator FPS, emulation speed, real clocks, temperatures and power to a timestamped CSV for objective stock-versus-overclock comparisons."},
+    {"Detailed frame-time log", "Benchmark logging",
+     "Writes every rendered-frame and emulated-vblank interval using Dolphin's native performance tracker. Enable only while benchmarking because the files grow continuously."},
+
     {"Anti-aliasing", "Image quality / performance",
      "Smooths polygon edges. MSAA increases GPU and memory cost; SSAA is substantially more expensive because it supersamples the rendered image."},
     {"Texture filtering", "Texture filtering",
@@ -1344,6 +1352,7 @@ private:
   void AdvancedEmulationSettings(bool per_game, Game* game = nullptr);
   void GraphicsSettings(bool per_game, Game* game = nullptr);
   void FrameGenerationSettings(bool per_game, Game* game = nullptr);
+  void HostPerformanceSettings(bool per_game, Game* game = nullptr);
   void GraphicsEnhancementsSettings(bool per_game, Game* game = nullptr);
   void GraphicsHacksSettings(bool per_game, Game* game = nullptr);
   void AudioSettings(bool per_game = false, Game* game = nullptr);
@@ -5058,6 +5067,140 @@ void Launcher::FrameGenerationSettings(bool per_game, Game* game)
           {
             Config::SetBase(Config::GFX_LSFG_PERFORMANCE_MODE,
                             !Config::Get(Config::GFX_LSFG_PERFORMANCE_MODE));
+            MarkConfigDirty();
+          }
+        }
+        return false;
+      });
+  if (game)
+    game->has_game_config = RegularFileExists(GameIniPath(*game));
+}
+
+void Launcher::HostPerformanceSettings(bool per_game, Game* game)
+{
+  using DolphinSwitch::Performance::Profile;
+  static constexpr std::array<std::string_view, 4> PROFILE_LABELS = {
+      "Stock baseline", "Balanced", "Performance", "Maximum (opt-in)"};
+  const std::string game_prefix =
+      game ? "Performance/Game/" + game->game_id + "/" : std::string{};
+
+  RunRows(
+      per_game ? "Game host performance" : "Host performance",
+      game ? game->title : std::string{},
+      [&] {
+        const int global_profile = std::clamp(m_store.GetInt("Performance/Profile", 0), 0, 3);
+        const bool global_metrics = m_store.GetBool("Performance/MetricsLogging", false);
+        const int local_profile = per_game ? m_store.GetInt(game_prefix + "Profile", -1) : -1;
+        const int local_metrics =
+            per_game ? m_store.GetInt(game_prefix + "MetricsLogging", -1) : -1;
+        const int effective_profile =
+            local_profile >= 0 ? std::clamp(local_profile, 0, 3) : global_profile;
+        const bool effective_metrics = local_metrics >= 0 ? local_metrics != 0 : global_metrics;
+        const bool detailed_global = Config::Get(Config::GFX_LOG_RENDER_TIME_TO_FILE);
+        const std::string profile_label =
+            per_game && local_profile < 0 ?
+                "Global: " + std::string(PROFILE_LABELS[global_profile]) :
+                std::string(PROFILE_LABELS[effective_profile]);
+        const std::string metrics_label =
+            per_game && local_metrics < 0 ?
+                std::string("Global: ") + (global_metrics ? "On" : "Off") :
+                (effective_metrics ? "On" : "Off");
+        return std::vector<Row>{
+            {"Host clock profile", profile_label},
+            {"Performance metrics log", metrics_label},
+            {"Detailed frame-time log",
+             per_game ? PerGameBoolLabel(*game, "Video_Settings",
+                                         "LogRenderTimeToFile", detailed_global) :
+                        std::string(detailed_global ? "On" : "Off")},
+        };
+      },
+      [&](int index, int delta) {
+        const int global_profile = std::clamp(m_store.GetInt("Performance/Profile", 0), 0, 3);
+        const bool global_metrics = m_store.GetBool("Performance/MetricsLogging", false);
+        const int local_profile = per_game ? m_store.GetInt(game_prefix + "Profile", -1) : -1;
+        const int local_metrics =
+            per_game ? m_store.GetInt(game_prefix + "MetricsLogging", -1) : -1;
+        if (index == 0)
+        {
+          const int effective_profile =
+              local_profile >= 0 ? std::clamp(local_profile, 0, 3) : global_profile;
+          std::vector<std::string> choices;
+          int selected = effective_profile;
+          if (per_game)
+          {
+            choices.emplace_back("Use global (" +
+                                 std::string(PROFILE_LABELS[global_profile]) + ")");
+            for (const std::string_view label : PROFILE_LABELS)
+              choices.emplace_back(label);
+            selected = local_profile < 0 ? 0 : std::clamp(local_profile, 0, 3) + 1;
+          }
+          else
+          {
+            for (const std::string_view label : PROFILE_LABELS)
+              choices.emplace_back(label);
+          }
+          selected = delta == 0 ?
+                         Dropdown("Host clock profile", choices, selected) :
+                         (selected + (delta < 0 ? -1 : 1) +
+                          static_cast<int>(choices.size())) %
+                             static_cast<int>(choices.size());
+          if (selected < 0)
+            return false;
+          const int chosen_profile = per_game ? selected - 1 : selected;
+          if (chosen_profile == static_cast<int>(Profile::Maximum) &&
+              !Confirm("Enable maximum host clocks?",
+                       std::array<std::string, 3>{
+                           "This uses the highest CPU clock in the standard sys-clk table.",
+                           "It increases heat and battery drain and is not required for baseline testing.",
+                           "The 75 C thermal guard remains active."}))
+          {
+            return false;
+          }
+          if (per_game)
+          {
+            if (selected == 0)
+              m_store.Remove(game_prefix + "Profile");
+            else
+              m_store.SetInt(game_prefix + "Profile", chosen_profile);
+          }
+          else
+          {
+            m_store.SetInt("Performance/Profile", chosen_profile);
+          }
+          MarkStoreDirty();
+        }
+        else if (index == 1)
+        {
+          if (per_game)
+          {
+            std::vector<std::string> choices{
+                std::string("Use global (") + (global_metrics ? "On)" : "Off)"), "Off", "On"};
+            int selected = local_metrics < 0 ? 0 : local_metrics != 0 ? 2 : 1;
+            selected = delta == 0 ? Dropdown("Performance metrics log", choices, selected) :
+                                    (selected + (delta < 0 ? -1 : 1) + 3) % 3;
+            if (selected == 0)
+              m_store.Remove(game_prefix + "MetricsLogging");
+            else
+              m_store.SetInt(game_prefix + "MetricsLogging", selected == 2 ? 1 : 0);
+          }
+          else
+          {
+            m_store.SetBool("Performance/MetricsLogging", !global_metrics);
+          }
+          MarkStoreDirty();
+        }
+        else
+        {
+          if (per_game)
+          {
+            const bool detailed_global = Config::Get(Config::GFX_LOG_RENDER_TIME_TO_FILE);
+            EditPerGameBool(*game, "Detailed frame-time log", "Video_Settings",
+                            "LogRenderTimeToFile", detailed_global, delta);
+          }
+          else
+          {
+            const bool detailed_global = Config::Get(Config::GFX_LOG_RENDER_TIME_TO_FILE);
+            Config::SetBase(Config::GFX_LOG_RENDER_TIME_TO_FILE, !detailed_global);
             MarkConfigDirty();
           }
         }
@@ -11253,13 +11396,14 @@ void Launcher::DownloadCover(Game* game)
 
 void Launcher::SettingsRoot()
 {
-  constexpr int count = 11;
+  constexpr int count = 12;
   constexpr int launcher_row = 0;
   constexpr int library_row = 1;
   constexpr int achievements_row = 2;
   constexpr int frame_generation_row = 3;
-  constexpr int online_row = 9;
-  constexpr int section_start = 4;
+  constexpr int host_performance_row = 4;
+  constexpr int online_row = 10;
+  constexpr int section_start = 5;
   int selection = 0;
   int top = 0;
   constexpr int row_height = 54;
@@ -11270,6 +11414,7 @@ void Launcher::SettingsRoot()
       "Library & storage",
       "RetroAchievements",
       "Frame Generation",
+      "Host Performance",
       "CPU / Emulation",
       "Graphics",
       "Audio",
@@ -11349,15 +11494,17 @@ void Launcher::SettingsRoot()
           AchievementSettings();
         else if (selection == frame_generation_row)
           FrameGenerationSettings(false);
-        else if (selection == 4)
-          EmulationSettings(false);
+        else if (selection == host_performance_row)
+          HostPerformanceSettings(false);
         else if (selection == 5)
-          GraphicsSettings(false);
+          EmulationSettings(false);
         else if (selection == 6)
-          AudioSettings(false);
+          GraphicsSettings(false);
         else if (selection == 7)
-          ConsoleSettings(false);
+          AudioSettings(false);
         else if (selection == 8)
+          ConsoleSettings(false);
+        else if (selection == 9)
           ControllerSettings(false);
         else if (selection == online_row)
           NetworkSettings();
@@ -11443,12 +11590,12 @@ void Launcher::PerGameSettingsRoot(Game* game)
 {
   if (!game)
     return;
-  constexpr int count = 7;
+  constexpr int count = 8;
   constexpr int row_height = 58;
   constexpr int y0 = 92;
   static constexpr std::array<std::string_view, count> labels = {
-      "CPU / Emulation", "Graphics", "Frame Generation", "Audio", "GameCube & Wii",
-      "Controller / Input", "Patches / AR / Gecko / Riivolution"};
+      "Host Performance", "CPU / Emulation", "Graphics", "Frame Generation", "Audio",
+      "GameCube & Wii", "Controller / Input", "Patches / AR / Gecko / Riivolution"};
   int selection = 0;
   BeginScreenFx();
   while (BeginFrame())
@@ -11507,16 +11654,18 @@ void Launcher::PerGameSettingsRoot(Game* game)
       if (activate)
       {
         if (selection == 0)
-          EmulationSettings(true, game);
+          HostPerformanceSettings(true, game);
         else if (selection == 1)
-          GraphicsSettings(true, game);
+          EmulationSettings(true, game);
         else if (selection == 2)
-          FrameGenerationSettings(true, game);
+          GraphicsSettings(true, game);
         else if (selection == 3)
-          AudioSettings(true, game);
+          FrameGenerationSettings(true, game);
         else if (selection == 4)
-          ConsoleSettings(true, game);
+          AudioSettings(true, game);
         else if (selection == 5)
+          ConsoleSettings(true, game);
+        else if (selection == 6)
           ControllerSettings(true, game);
         else
           GameModsSettings(game);

@@ -10,6 +10,8 @@ add_executable(dolphin-switch
   Launcher.cpp
   Launcher.h
   Main.cpp
+  PerformanceManager.cpp
+  PerformanceManager.h
   RuntimeOverlay.cpp
   RuntimeOverlay.h
   SwitchPosixCompat.cpp
@@ -20,6 +22,9 @@ add_executable(dolphin-switch
   UiAudio.cpp
   UiAudio.h
 )
+
+set(DOLPHIN_SWITCH_VERSION "0.1.0" CACHE STRING
+    "User-facing version for the Nintendo Switch package")
 
 set_source_files_properties(ExceptionStack.c PROPERTIES COMPILE_OPTIONS "-fno-lto")
 
@@ -70,13 +75,15 @@ add_custom_command(
           "-specs=${DEVKITPRO}/libnx/switch.specs"
           -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft
           -fPIE -O2 -DNDEBUG -ffunction-sections -fdata-sections -fno-ident
-          "-I${DEVKITPRO}/libnx/include" -D__SWITCH__ "-DVERSION=\"0.3.21\""
+          "-I${DEVKITPRO}/libnx/include" -D__SWITCH__
+          "-DVERSION=\"${DOLPHIN_SWITCH_VERSION}\""
           "-L${DEVKITPRO}/libnx/lib" -lnx -Wl,--gc-sections -Wl,--build-id=none
           -Wl,--wrap,exit
   COMMAND "${NX_ELF2NSO_EXE}" "${_forwarder_elf}" "${_forwarder_output}/hbl.nso"
   COMMAND "${NX_NPDMTOOL_EXE}" "${_forwarder_source}/hbl.json"
           "${_forwarder_output}/hbl.npdm"
-  COMMAND "${NX_NACPTOOL_EXE}" --create Dolphin "Dolphin Emulator Project" 0.3.21
+  COMMAND "${NX_NACPTOOL_EXE}" --create Dolphin "Dolphin Emulator Project"
+          "${DOLPHIN_SWITCH_VERSION}"
           "${_forwarder_output}/default.nacp"
   DEPENDS
     "${_forwarder_source}/main.c"
@@ -94,7 +101,7 @@ nx_generate_nacp(
   OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/dolphin.nacp"
   NAME "Dolphin"
   AUTHOR "Dolphin Emulator Project"
-  VERSION "0.3.21"
+  VERSION "${DOLPHIN_SWITCH_VERSION}"
 )
 
 nx_create_nro(dolphin_nro
