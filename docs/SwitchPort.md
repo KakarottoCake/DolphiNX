@@ -43,6 +43,8 @@ path.
 
 Settings are global or per game:
 
+- **One-button benchmark** temporarily forces the clean baseline described below for every launched
+  game. It does not overwrite the user's normal Dolphin or per-game settings.
 - **Host clock profile** chooses the session target.
 - **Performance metrics log** writes a 500 ms CSV containing emulator FPS/VPS, emulation speed,
   clocks, temperatures, power, mode, and thermal-guard state.
@@ -56,15 +58,19 @@ Metrics CSVs are stored under `sdmc:/switch/dolphin/Logs/Performance`.
 Use a legally dumped copy of the game. Test the same revision, save, route, camera direction, and
 duration for every build.
 
+Arm **Settings > Host Performance > One-button benchmark**. For the active session this forces
+stock host clocks, ARM64 JIT, dual core, fastmem, DSP HLE, 100% emulation speed, no emulated
+CPU/VBI overclock, 1x internal resolution, no AA/high-resolution textures/post-processing/frame
+generation, VSync off, and both logs on. Dolphin's normal and per-game settings return after the
+session.
+
 Recommended first acceptance pass:
 
-1. Select **Stock baseline**, 1x native internal resolution, Vulkan/NVK, no frame generation, and
-   no emulated CPU or VBI clock override.
-2. Enable both performance logs.
-3. Run the route once to populate the shader and pipeline caches. Do not use that run for scoring.
-4. Restart Dolphin, begin from the same save/state, wait 30 seconds, and record at least ten minutes.
-5. Repeat in handheld and docked modes. Then repeat with Balanced and Performance profiles to
-   quantify remaining host-clock sensitivity.
+1. Arm **One-button benchmark** and launch the game.
+2. Run the route once to populate the shader and pipeline caches. Do not use that run for scoring.
+3. Restart Dolphin, begin from the same save/state, wait 30 seconds, and record at least ten minutes.
+4. Repeat in handheld and docked modes. To measure clock sensitivity afterward, disarm benchmark
+   mode, enable both logs, and repeat with the Balanced and Performance profiles.
 
 The initial target for a stable 30 FPS game is:
 

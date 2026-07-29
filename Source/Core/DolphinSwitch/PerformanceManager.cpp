@@ -21,6 +21,10 @@
 #include <utility>
 
 #include "Common/FileUtil.h"
+#include "Common/Config/Config.h"
+#include "Core/Config/GraphicsSettings.h"
+#include "Core/Config/MainSettings.h"
+#include "Core/PowerPC/PowerPC.h"
 #include "VideoCommon/PerformanceMetrics.h"
 
 namespace DolphinSwitch::Performance
@@ -98,6 +102,7 @@ struct State
   bool original_enabled = false;
   bool changed_enabled = false;
   bool thermal_guard = false;
+  bool benchmark_mode = false;
   Hardware hardware = Hardware::Unknown;
   Profile profile = Profile::Stock;
   SysClkProfile operating_mode = SysClkProfile::Handheld;
@@ -317,6 +322,7 @@ void UpdateSnapshot(const SysClkContext& context, const ClockTargets& targets)
   s_state.snapshot.sysclk_available = s_state.service_open;
   s_state.snapshot.sysclk_enabled = context.enabled != 0;
   s_state.snapshot.thermal_guard = s_state.thermal_guard;
+  s_state.snapshot.benchmark_mode = s_state.benchmark_mode;
   s_state.snapshot.profile = s_state.profile;
   s_state.snapshot.hardware = s_state.hardware;
   s_state.snapshot.operating_mode = OperatingModeName(context.profile);
@@ -364,7 +370,7 @@ void OpenMetricsLog()
       "elapsed_ms,game_id,profile,mode,hardware,fps,vps,speed_pct,max_speed_pct,"
       "requested_cpu_mhz,requested_gpu_mhz,requested_mem_mhz,actual_cpu_mhz,"
       "actual_gpu_mhz,actual_mem_mhz,soc_temp_c,pcb_temp_c,skin_temp_c,power_mw,"
-      "thermal_guard\n",
+      "thermal_guard,benchmark_mode\n",
       s_state.metrics_file);
 }
 
@@ -379,7 +385,7 @@ void WriteMetrics(const PerformanceMetrics& metrics)
   std::fprintf(
       s_state.metrics_file,
       "%lld,%s,%s,%s,%s,%.3f,%.3f,%.3f,%.3f,%u,%u,%u,%u,%u,%u,%.3f,%.3f,"
-      "%.3f,%d,%d\n",
+      "%.3f,%d,%d,%d\n",
       static_cast<long long>(elapsed), s_state.game_id.c_str(),
       ProfileName(snapshot.profile).data(), snapshot.operating_mode.c_str(),
       HardwareName(snapshot.hardware).data(), metrics.GetFPS(), metrics.GetVPS(),
@@ -388,7 +394,7 @@ void WriteMetrics(const PerformanceMetrics& metrics)
       snapshot.actual_mhz[1], snapshot.actual_mhz[2],
       snapshot.temperatures_millic[0] / 1000.0, snapshot.temperatures_millic[1] / 1000.0,
       snapshot.temperatures_millic[2] / 1000.0, snapshot.power_mw,
-      snapshot.thermal_guard ? 1 : 0);
+      snapshot.thermal_guard ? 1 : 0, snapshot.benchmark_mode ? 1 : 0);
   std::fflush(s_state.metrics_file);
 }
 }  // namespace
@@ -451,6 +457,7 @@ Settings LoadSettings(std::string_view game_id)
   Settings settings;
   settings.profile = ProfileFromInt(ParseInt(values, "Performance/Profile", 0));
   settings.metrics_logging = ParseBool(values, "Performance/MetricsLogging", false);
+  settings.benchmark_mode = ParseBool(values, "Performance/BenchmarkMode", false);
   if (!game_id.empty())
   {
     const std::string prefix = "Performance/Game/" + std::string(game_id) + "/";
@@ -461,7 +468,45 @@ Settings LoadSettings(std::string_view game_id)
     if (local_logging >= 0)
       settings.metrics_logging = local_logging != 0;
   }
+  if (settings.benchmark_mode)
+  {
+    settings.profile = Profile::Stock;
+    settings.metrics_logging = true;
+  }
   return settings;
+}
+
+void ApplyBenchmarkConfigOverrides(const Settings& settings)
+{
+  if (!settings.benchmark_mode)
+    return;
+
+  Config::ConfigChangeCallbackGuard config_guard;
+
+  Config::SetCurrent(Config::MAIN_CPU_CORE, PowerPC::CPUCore::JITARM64);
+  Config::SetCurrent(Config::MAIN_CPU_THREAD, true);
+  Config::SetCurrent(Config::MAIN_FASTMEM, true);
+  Config::SetCurrent(Config::MAIN_PAGE_TABLE_FASTMEM, true);
+  Config::SetCurrent(Config::MAIN_FASTMEM_ARENA, true);
+  Config::SetCurrent(Config::MAIN_LARGE_ENTRY_POINTS_MAP, true);
+  Config::SetCurrent(Config::MAIN_ACCURATE_CPU_CACHE, false);
+  Config::SetCurrent(Config::MAIN_DSP_HLE, true);
+  Config::SetCurrent(Config::MAIN_ENABLE_CHEATS, false);
+  Config::SetCurrent(Config::MAIN_EMULATION_SPEED, 1.0f);
+  Config::SetCurrent(Config::MAIN_OVERCLOCK_ENABLE, false);
+  Config::SetCurrent(Config::MAIN_VI_OVERCLOCK_ENABLE, false);
+
+  Config::SetCurrent(Config::GFX_EFB_SCALE, 1);
+  Config::SetCurrent(Config::GFX_MSAA, 1u);
+  Config::SetCurrent(Config::GFX_SSAA, false);
+  Config::SetCurrent(Config::GFX_WIDESCREEN_HACK, false);
+  Config::SetCurrent(Config::GFX_HIRES_TEXTURES, false);
+  Config::SetCurrent(Config::GFX_CACHE_HIRES_TEXTURES, false);
+  Config::SetCurrent(Config::GFX_ENABLE_PIXEL_LIGHTING, false);
+  Config::SetCurrent(Config::GFX_ENHANCE_POST_SHADER, std::string{});
+  Config::SetCurrent(Config::GFX_LSFG_ENABLED, false);
+  Config::SetCurrent(Config::GFX_VSYNC, false);
+  Config::SetCurrent(Config::GFX_LOG_RENDER_TIME_TO_FILE, true);
 }
 
 void BeginSession(std::string game_id, Settings settings)
@@ -473,6 +518,7 @@ void BeginSession(std::string game_id, Settings settings)
   s_state = {};
   s_state.session_active = true;
   s_state.profile = settings.profile;
+  s_state.benchmark_mode = settings.benchmark_mode;
   s_state.game_id = std::move(game_id);
   s_state.hardware = DetectHardware();
   s_state.started_at = std::chrono::steady_clock::now();
@@ -480,6 +526,7 @@ void BeginSession(std::string game_id, Settings settings)
   s_state.snapshot.session_active = true;
   s_state.snapshot.profile = settings.profile;
   s_state.snapshot.hardware = s_state.hardware;
+  s_state.snapshot.benchmark_mode = settings.benchmark_mode;
 
   if (R_FAILED(smGetService(&s_state.service, SYSCLK_SERVICE_NAME)))
   {
@@ -526,7 +573,10 @@ void BeginSession(std::string game_id, Settings settings)
 
   const ClockTargets targets = TargetsFor(s_state.profile, context.profile, s_state.hardware);
   if (ApplyTargets(targets))
-    s_state.snapshot.status = "Session clock profile active; prior overrides will be restored";
+    s_state.snapshot.status =
+        settings.benchmark_mode ?
+            "Benchmark mode active: clean stock baseline and logging enabled" :
+            "Session clock profile active; prior overrides will be restored";
   else
     s_state.snapshot.status = "One or more sys-clk overrides could not be applied";
   UpdateSnapshot(context, targets);

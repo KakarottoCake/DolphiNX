@@ -906,7 +906,10 @@ void RenderMainPage()
                 9);
   const Performance::Snapshot performance = Performance::GetSnapshot();
   SelectableRow("Host performance                  " +
-                    std::string(Performance::ProfileName(performance.profile)) + "  >",
+                    (performance.benchmark_mode ?
+                         std::string("Benchmark active") :
+                         std::string(Performance::ProfileName(performance.profile))) +
+                    "  >",
                 10);
   SelectableRow("Reset console", 11);
   SelectableRow("Return to Dolphin launcher", 12);
@@ -916,6 +919,7 @@ void RenderPerformancePage()
 {
   const Performance::Snapshot snapshot = Performance::GetSnapshot();
   ImGui::Text("Profile: %s", Performance::ProfileName(snapshot.profile).data());
+  ImGui::Text("Benchmark mode: %s", snapshot.benchmark_mode ? "Active" : "Off");
   ImGui::Text("Hardware: %s", Performance::HardwareName(snapshot.hardware).data());
   ImGui::Text("Mode: %s", snapshot.operating_mode.c_str());
   ImGui::Text("FPS / speed / headroom: %.2f / %.2f%% / %.2f%%", snapshot.fps,

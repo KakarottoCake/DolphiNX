@@ -829,6 +829,8 @@ static constexpr SettingHelpEntry SETTING_HELP[] = {
 
     {"Host clock profile", "Switch performance",
      "Selects explicit CPU, GPU and memory targets for this game session. Stock baseline uses official clocks; the other profiles require sys-clk and restore your prior state on exit."},
+    {"One-button benchmark", "Repeatable baseline",
+     "Arms a session-only clean benchmark configuration: stock host clocks, ARM64 JIT, dual core, fastmem, DSP HLE, 1x graphics, no enhancements, no frame generation, no emulated clock overrides, and both performance logs. Your normal game settings are not overwritten."},
     {"Performance metrics log", "Benchmark logging",
      "Writes emulator FPS, emulation speed, real clocks, temperatures and power to a timestamped CSV for objective stock-versus-overclock comparisons."},
     {"Detailed frame-time log", "Benchmark logging",
@@ -5088,6 +5090,7 @@ void Launcher::HostPerformanceSettings(bool per_game, Game* game)
       per_game ? "Game host performance" : "Host performance",
       game ? game->title : std::string{},
       [&] {
+        const bool benchmark_mode = m_store.GetBool("Performance/BenchmarkMode", false);
         const int global_profile = std::clamp(m_store.GetInt("Performance/Profile", 0), 0, 3);
         const bool global_metrics = m_store.GetBool("Performance/MetricsLogging", false);
         const int local_profile = per_game ? m_store.GetInt(game_prefix + "Profile", -1) : -1;
@@ -5097,30 +5100,47 @@ void Launcher::HostPerformanceSettings(bool per_game, Game* game)
             local_profile >= 0 ? std::clamp(local_profile, 0, 3) : global_profile;
         const bool effective_metrics = local_metrics >= 0 ? local_metrics != 0 : global_metrics;
         const bool detailed_global = Config::Get(Config::GFX_LOG_RENDER_TIME_TO_FILE);
-        const std::string profile_label =
-            per_game && local_profile < 0 ?
-                "Global: " + std::string(PROFILE_LABELS[global_profile]) :
-                std::string(PROFILE_LABELS[effective_profile]);
-        const std::string metrics_label =
-            per_game && local_metrics < 0 ?
-                std::string("Global: ") + (global_metrics ? "On" : "Off") :
-                (effective_metrics ? "On" : "Off");
+        const std::string profile_label = benchmark_mode ?
+                                              "Forced: Stock baseline" :
+                                              per_game && local_profile < 0 ?
+                                              "Global: " +
+                                                  std::string(PROFILE_LABELS[global_profile]) :
+                                              std::string(PROFILE_LABELS[effective_profile]);
+        const std::string metrics_label = benchmark_mode ?
+                                              "Forced: On" :
+                                              per_game && local_metrics < 0 ?
+                                              std::string("Global: ") +
+                                                  (global_metrics ? "On" : "Off") :
+                                              (effective_metrics ? "On" : "Off");
         return std::vector<Row>{
-            {"Host clock profile", profile_label},
-            {"Performance metrics log", metrics_label},
+            {"One-button benchmark", benchmark_mode ? "Armed" : "Off"},
+            {"Host clock profile", profile_label, !benchmark_mode},
+            {"Performance metrics log", metrics_label, !benchmark_mode},
             {"Detailed frame-time log",
-             per_game ? PerGameBoolLabel(*game, "Video_Settings",
-                                         "LogRenderTimeToFile", detailed_global) :
-                        std::string(detailed_global ? "On" : "Off")},
+             benchmark_mode ?
+                 "Forced: On" :
+                 per_game ? PerGameBoolLabel(*game, "Video_Settings",
+                                             "LogRenderTimeToFile", detailed_global) :
+                            std::string(detailed_global ? "On" : "Off"),
+             !benchmark_mode},
         };
       },
       [&](int index, int delta) {
+        const bool benchmark_mode = m_store.GetBool("Performance/BenchmarkMode", false);
         const int global_profile = std::clamp(m_store.GetInt("Performance/Profile", 0), 0, 3);
         const bool global_metrics = m_store.GetBool("Performance/MetricsLogging", false);
         const int local_profile = per_game ? m_store.GetInt(game_prefix + "Profile", -1) : -1;
         const int local_metrics =
             per_game ? m_store.GetInt(game_prefix + "MetricsLogging", -1) : -1;
         if (index == 0)
+        {
+          m_store.SetBool("Performance/BenchmarkMode", !benchmark_mode);
+          MarkStoreDirty();
+          Toast(benchmark_mode ? "Benchmark mode disarmed" :
+                                 "Benchmark mode armed: stock, 1x, logs on",
+                1600);
+        }
+        else if (index == 1)
         {
           const int effective_profile =
               local_profile >= 0 ? std::clamp(local_profile, 0, 3) : global_profile;
@@ -5169,7 +5189,7 @@ void Launcher::HostPerformanceSettings(bool per_game, Game* game)
           }
           MarkStoreDirty();
         }
-        else if (index == 1)
+        else if (index == 2)
         {
           if (per_game)
           {

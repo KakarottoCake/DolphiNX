@@ -31,6 +31,7 @@ struct Settings
 {
   Profile profile = Profile::Stock;
   bool metrics_logging = false;
+  bool benchmark_mode = false;
 };
 
 struct Snapshot
@@ -39,6 +40,7 @@ struct Snapshot
   bool sysclk_available = false;
   bool sysclk_enabled = false;
   bool thermal_guard = false;
+  bool benchmark_mode = false;
   Profile profile = Profile::Stock;
   Hardware hardware = Hardware::Unknown;
   std::string operating_mode = "Unknown";
@@ -59,6 +61,10 @@ std::string_view HardwareName(Hardware hardware);
 
 // Reads the global settings and any game-ID override from launcher.ini.
 Settings LoadSettings(std::string_view game_id);
+
+// Applies a clean, temporary 1x/JIT/dual-core benchmark configuration to Dolphin's CurrentRun
+// layer. BootManager clears this layer when the emulation session ends.
+void ApplyBenchmarkConfigOverrides(const Settings& settings);
 
 // Host clock overrides exist only for the active emulation session. Any overrides and enabled
 // state that existed before the session are restored by EndSession().

@@ -552,17 +552,26 @@ SessionResult RunGameSession(const DolphinSwitch::LaunchRequest& request)
   UICommon::InitControllers(wsi);
   Common::ScopeGuard controller_guard([] { UICommon::ShutdownControllers(); });
 
-  const DolphinSwitch::Performance::Settings performance_settings =
-      DolphinSwitch::Performance::LoadSettings(resolved_request.game_id);
-  DolphinSwitch::Performance::BeginSession(resolved_request.game_id, performance_settings);
-  Common::ScopeGuard performance_guard([] { DolphinSwitch::Performance::EndSession(); });
-
   std::unique_ptr<BootParameters> boot = GenerateBootParameters(resolved_request);
   if (!boot)
   {
     return {false, CollectAlertText(
                        "Dolphin could not create boot parameters for the selected title.")};
   }
+
+  const DolphinSwitch::Performance::Settings performance_settings =
+      DolphinSwitch::Performance::LoadSettings(resolved_request.game_id);
+  DolphinSwitch::Performance::ApplyBenchmarkConfigOverrides(performance_settings);
+  Common::ScopeGuard current_run_guard([benchmark_mode = performance_settings.benchmark_mode] {
+    if (benchmark_mode)
+    {
+      Config::ClearCurrentRunLayer();
+      Config::OnConfigChanged();
+    }
+  });
+
+  DolphinSwitch::Performance::BeginSession(resolved_request.game_id, performance_settings);
+  Common::ScopeGuard performance_guard([] { DolphinSwitch::Performance::EndSession(); });
 
   std::atomic_bool ever_running{false};
   s_session_running.store(true, std::memory_order_release);

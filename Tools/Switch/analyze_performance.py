@@ -104,7 +104,12 @@ def report_metrics(
     profile = rows[-1].get("profile", "Unknown")
     mode = rows[-1].get("mode", "Unknown")
     hardware = rows[-1].get("hardware", "Unknown")
-    print(f"Host metrics: {len(rows):,} samples | {profile} | {mode} | {hardware}")
+    benchmark_mode = rows[-1].get("benchmark_mode") == "1"
+    benchmark_label = "benchmark mode" if benchmark_mode else "manual settings"
+    print(
+        f"Host metrics: {len(rows):,} samples | {profile} | {mode} | "
+        f"{hardware} | {benchmark_label}"
+    )
     passed = bool(speeds)
     if speeds:
         below_full_speed = sum(value < 99.0 for value in speeds)
