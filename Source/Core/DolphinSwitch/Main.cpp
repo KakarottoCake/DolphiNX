@@ -47,6 +47,7 @@
 #include "DolphinSwitch/Audio.h"
 #include "DolphinSwitch/Forwarder.h"
 #include "DolphinSwitch/Launcher.h"
+#include "DolphinSwitch/PerformanceManager.h"
 #include "DolphinSwitch/RuntimeOverlay.h"
 #include "DolphinSwitch/SystemLanguage.h"
 #include "InputCommon/ControllerEmu/ControlGroup/Attachments.h"
@@ -551,6 +552,11 @@ SessionResult RunGameSession(const DolphinSwitch::LaunchRequest& request)
   UICommon::InitControllers(wsi);
   Common::ScopeGuard controller_guard([] { UICommon::ShutdownControllers(); });
 
+  const DolphinSwitch::Performance::Settings performance_settings =
+      DolphinSwitch::Performance::LoadSettings(resolved_request.game_id);
+  DolphinSwitch::Performance::BeginSession(resolved_request.game_id, performance_settings);
+  Common::ScopeGuard performance_guard([] { DolphinSwitch::Performance::EndSession(); });
+
   std::unique_ptr<BootParameters> boot = GenerateBootParameters(resolved_request);
   if (!boot)
   {
@@ -614,6 +620,7 @@ SessionResult RunGameSession(const DolphinSwitch::LaunchRequest& request)
          (applet_alive = appletMainLoop()))
   {
     Core::HostDispatchJobs(system);
+    DolphinSwitch::Performance::Tick(system.GetPerfMetrics());
 
     for (PendingAlert& alert : TakePendingAlerts())
       DolphinSwitch::RuntimeOverlay::ShowAlert(std::move(alert.caption), std::move(alert.text));

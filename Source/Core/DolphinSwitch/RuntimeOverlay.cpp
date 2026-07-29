@@ -36,6 +36,7 @@
 #include "Core/GeckoCode.h"
 #include "Core/GeckoCodeConfig.h"
 #include "Core/State.h"
+#include "DolphinSwitch/PerformanceManager.h"
 #include "VideoBackends/Vulkan/LSFGControl.h"
 #include "VideoCommon/OnScreenUI.h"
 
@@ -54,6 +55,7 @@ enum class Page
   Achievements,
   Controllers,
   ControllerModes,
+  Performance,
   Alert,
 };
 
@@ -96,7 +98,7 @@ struct StateSaveMonitorRequest
 
 constexpr std::uint64_t MENU_CHORD =
     HidNpadButton_L | HidNpadButton_R | HidNpadButton_Plus;
-constexpr int MAIN_ITEM_COUNT = 12;
+constexpr int MAIN_ITEM_COUNT = 13;
 constexpr int DISC_ITEM_COUNT = 3;
 constexpr int CONTROLLER_ITEM_COUNT = 5;
 constexpr int CONTROLLER_MODE_ITEM_COUNT = 6;
@@ -649,6 +651,8 @@ int ItemCount()
     return CONTROLLER_ITEM_COUNT;
   case Page::ControllerModes:
     return CONTROLLER_MODE_ITEM_COUNT;
+  case Page::Performance:
+    return 1;
   case Page::Alert:
     return 1;
   }
@@ -737,10 +741,13 @@ void ActivateSelection()
       QueueAction({ActionType::ToggleFPS});
       break;
     case 10:
+      SetPage(Page::Performance);
+      break;
+    case 11:
       QueueAction({ActionType::Reset});
       CloseMenu();
       break;
-    case 11:
+    case 12:
       QueueAction({ActionType::StopToLauncher});
       CloseMenu();
       break;
@@ -830,6 +837,9 @@ void ActivateSelection()
       s_selection = s_controller_player;
     }
     break;
+  case Page::Performance:
+    SetPage(Page::Main);
+    break;
   case Page::Alert:
     CloseMenu();
     break;
@@ -894,8 +904,48 @@ void RenderMainPage()
   SelectableRow(std::string("Show FPS                         <  ") +
                     (s_show_fps ? "Enabled" : "Disabled") + "  >",
                 9);
-  SelectableRow("Reset console", 10);
-  SelectableRow("Return to Dolphin launcher", 11);
+  const Performance::Snapshot performance = Performance::GetSnapshot();
+  SelectableRow("Host performance                  " +
+                    std::string(Performance::ProfileName(performance.profile)) + "  >",
+                10);
+  SelectableRow("Reset console", 11);
+  SelectableRow("Return to Dolphin launcher", 12);
+}
+
+void RenderPerformancePage()
+{
+  const Performance::Snapshot snapshot = Performance::GetSnapshot();
+  ImGui::Text("Profile: %s", Performance::ProfileName(snapshot.profile).data());
+  ImGui::Text("Hardware: %s", Performance::HardwareName(snapshot.hardware).data());
+  ImGui::Text("Mode: %s", snapshot.operating_mode.c_str());
+  ImGui::Text("FPS / speed / headroom: %.2f / %.2f%% / %.2f%%", snapshot.fps,
+              snapshot.speed_percent, snapshot.max_speed_percent);
+  ImGui::Separator();
+  if (!snapshot.sysclk_available)
+  {
+    ImGui::TextWrapped("sys-clk unavailable. Dolphin has not changed host clocks.");
+  }
+  else
+  {
+    ImGui::Text("Requested CPU / GPU / MEM: %u / %u / %u MHz",
+                snapshot.requested_mhz[0], snapshot.requested_mhz[1],
+                snapshot.requested_mhz[2]);
+    ImGui::Text("Actual CPU / GPU / MEM:    %u / %u / %u MHz", snapshot.actual_mhz[0],
+                snapshot.actual_mhz[1], snapshot.actual_mhz[2]);
+    ImGui::Text("SOC / PCB / skin: %.1f / %.1f / %.1f C",
+                snapshot.temperatures_millic[0] / 1000.0,
+                snapshot.temperatures_millic[1] / 1000.0,
+                snapshot.temperatures_millic[2] / 1000.0);
+    ImGui::Text("Power: %.2f W", snapshot.power_mw / 1000.0);
+    if (snapshot.thermal_guard)
+      ImGui::TextColored({1.0f, 0.65f, 0.25f, 1.0f}, "Thermal guard: official clocks");
+  }
+  if (!snapshot.status.empty())
+    ImGui::TextWrapped("%s", snapshot.status.c_str());
+  ImGui::Spacing();
+  SelectableRow("Back", 0, 58.0f);
+  ImGui::Separator();
+  CenteredText("Profiles are changed in Settings > Host Performance");
 }
 
 void RenderControllersPage()
@@ -1435,6 +1485,9 @@ void Draw()
     case Page::ControllerModes:
       CenteredText(("Player " + std::to_string(s_controller_player + 1) + " Controller").c_str());
       break;
+    case Page::Performance:
+      CenteredText("Host Performance");
+      break;
     case Page::Alert:
       break;
     }
@@ -1470,6 +1523,9 @@ void Draw()
       break;
     case Page::ControllerModes:
       RenderControllerModesPage();
+      break;
+    case Page::Performance:
+      RenderPerformancePage();
       break;
     case Page::Alert:
       RenderAlert();
