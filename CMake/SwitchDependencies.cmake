@@ -5,6 +5,12 @@ endif()
 set(DOLPHIN_SWITCH_NVK_OBJECT
     "${CMAKE_BINARY_DIR}/nvk/libnvk_local.o"
     CACHE FILEPATH "Localized NVK driver object produced by Tools/Switch/prepare_nvk.sh")
+set(DOLPHIN_SWITCH_NVK_FLAVOR_FILE "${CMAKE_BINARY_DIR}/nvk/flavor.txt")
+set(DOLPHIN_SWITCH_NVK_FLAVOR "legacy")
+if(EXISTS "${DOLPHIN_SWITCH_NVK_FLAVOR_FILE}")
+  file(READ "${DOLPHIN_SWITCH_NVK_FLAVOR_FILE}" DOLPHIN_SWITCH_NVK_FLAVOR)
+  string(STRIP "${DOLPHIN_SWITCH_NVK_FLAVOR}" DOLPHIN_SWITCH_NVK_FLAVOR)
+endif()
 
 if(NOT EXISTS "${DOLPHIN_SWITCH_NVK_OBJECT}")
   message(FATAL_ERROR
@@ -20,6 +26,9 @@ pkg_check_modules(SwitchSDL2Pkg REQUIRED IMPORTED_TARGET sdl2)
 pkg_check_modules(SwitchSDL2TTFPkg REQUIRED IMPORTED_TARGET SDL2_ttf)
 pkg_check_modules(SwitchSDL2ImagePkg REQUIRED IMPORTED_TARGET SDL2_image)
 pkg_check_modules(SwitchCurlPkg REQUIRED IMPORTED_TARGET libcurl)
+if(DOLPHIN_SWITCH_NVK_FLAVOR STREQUAL "hayatog")
+  pkg_check_modules(SwitchExpatPkg REQUIRED IMPORTED_TARGET expat)
+endif()
 
 add_library(SwitchSDL2 INTERFACE)
 target_link_libraries(SwitchSDL2 INTERFACE PkgConfig::SwitchSDL2Pkg)
@@ -67,11 +76,26 @@ add_library(SwitchNVK UNKNOWN IMPORTED GLOBAL)
 set_target_properties(SwitchNVK PROPERTIES
   IMPORTED_LOCATION "${DOLPHIN_SWITCH_NVK_OBJECT}"
 )
+if(DOLPHIN_SWITCH_NVK_FLAVOR STREQUAL "hayatog")
+  target_link_libraries(SwitchNVK INTERFACE PkgConfig::SwitchExpatPkg)
+  target_link_options(SwitchNVK INTERFACE
+    -Wl,--wrap=open
+    -Wl,--wrap=close
+    -Wl,--wrap=stat
+    -Wl,--wrap=lstat
+    -Wl,--wrap=vk_icdGetInstanceProcAddr
+  )
+endif()
 add_library(Switch::NVK ALIAS SwitchNVK)
 
-add_library(SwitchDRMNouveau STATIC IMPORTED GLOBAL)
-set_target_properties(SwitchDRMNouveau PROPERTIES
-  IMPORTED_LOCATION "${_switch_portlibs}/lib/libdrm_nouveau.a"
-  INTERFACE_INCLUDE_DIRECTORIES "${_switch_portlibs}/include"
-)
+if(DOLPHIN_SWITCH_NVK_FLAVOR STREQUAL "hayatog")
+  # HayatoG's package contains its own Nouveau DRM and NWindow winsys shims.
+  add_library(SwitchDRMNouveau INTERFACE)
+else()
+  add_library(SwitchDRMNouveau STATIC IMPORTED GLOBAL)
+  set_target_properties(SwitchDRMNouveau PROPERTIES
+    IMPORTED_LOCATION "${_switch_portlibs}/lib/libdrm_nouveau.a"
+    INTERFACE_INCLUDE_DIRECTORIES "${_switch_portlibs}/include"
+  )
+endif()
 add_library(Switch::DRMNouveau ALIAS SwitchDRMNouveau)

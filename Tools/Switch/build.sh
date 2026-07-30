@@ -11,7 +11,7 @@ VERSION="${DOLPHIN_SWITCH_VERSION:-0.1.0}"
 NVK_SHA256="${DOLPHIN_SWITCH_NVK_SHA256:-}"
 
 if [[ -z "${NVK_ZIP}" ]]; then
-  echo "Usage: $0 <mesa-switch-vulkan-sdk.zip|builddir-switch.zip>" >&2
+  echo "Usage: $0 <switch-nvk.zip|mesa-switch-vulkan-sdk.zip|builddir-switch.zip>" >&2
   echo "Alternatively set DOLPHIN_SWITCH_NVK_ZIP." >&2
   exit 1
 fi
@@ -48,7 +48,7 @@ if [[ -n "${NVK_SHA256}" ]]; then
 fi
 
 MISSING_PACKAGES=()
-for package in sdl2 SDL2_ttf SDL2_image libcurl; do
+for package in sdl2 SDL2_ttf SDL2_image libcurl expat; do
   if ! PKG_CONFIG_PATH="${DEVKITPRO}/portlibs/switch/lib/pkgconfig" \
        pkg-config --exists "${package}"; then
     MISSING_PACKAGES+=("${package}")

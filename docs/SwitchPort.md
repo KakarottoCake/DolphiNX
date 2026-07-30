@@ -106,7 +106,9 @@ Requirements:
 
 - devkitPro with devkitA64, libnx, SDL2, SDL2_ttf, SDL2_image, curl, and the other Switch portlibs;
 - all Dolphin Git submodules;
-- an NVK Switch SDK archive compatible with the port.
+- an NVK Switch SDK archive compatible with the port. The preferred package is built from
+  [HayatoG/switch-nvk](https://github.com/HayatoG/switch-nvk); Dolphin also retains compatibility
+  with the older multi-archive NVK bundles used by the donor port.
 
 Initialize dependencies:
 
@@ -124,6 +126,11 @@ Tools/Switch/build.sh "/path/to/mesa-switch-vulkan-sdk.zip"
 The checksum is optional for local experimentation and strongly recommended for repeatable builds.
 The output is `build-switch/Binaries/dolphin.nro`. Override the package version with
 `DOLPHIN_SWITCH_VERSION`.
+
+The initial pre-release uses switch-nvk commit
+`6eec707da3ad5f86c64f748226583202801bfd03` with Mesa 25.0.7. HayatoG's package includes the
+Nouveau DRM, NWindow WSI, and loaderless Vulkan shims in one static archive; the build detects that
+layout and avoids linking the donor port's older standalone DRM archive.
 
 ## Keeping up with Dolphin
 
