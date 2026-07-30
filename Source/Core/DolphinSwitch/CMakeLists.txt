@@ -17,6 +17,8 @@ add_executable(dolphin-switch
   SwitchPosixCompat.cpp
   Storage.cpp
   Storage.h
+  StartupLog.cpp
+  StartupLog.h
   SystemLanguage.cpp
   SystemLanguage.h
   UiAudio.cpp

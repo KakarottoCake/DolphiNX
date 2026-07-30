@@ -159,6 +159,7 @@ echo "Merging the static NVK driver ..."
 if [[ "${HAYATOG_PACKAGE}" == true ]]; then
   "${LD}" -r \
     --allow-multiple-definition \
+    --force-group-allocation \
     --whole-archive "${LIB}/libvulkan.a" --no-whole-archive \
     -o "${MERGED}"
 elif [[ "${SDK_PACKAGE}" == true ]]; then
@@ -223,8 +224,10 @@ fi
 LOCALIZE_INPUT="${MERGED}"
 if [[ "${HAYATOG_PACKAGE}" == true ]]; then
   # The packaged driver and devkitPro's SDL/EGL stack contain different generations of
-  # Nouveau's C++ codegen. Give every private NVK definition a unique name before localization
-  # so ELF COMDAT selection cannot discard one generation's implementation in favor of the other.
+  # Nouveau's C++ codegen. The partial link above removes COMDAT groups, then every private NVK
+  # definition receives a unique name before localization. Both are required: objcopy renames most
+  # group signatures, but compiler-generated local signatures can otherwise remain shared with
+  # SDL/EGL and make the final link depend on object order.
   "${NM}" -g --defined-only --format=posix "${MERGED}" |
     awk '
       $1 != "vk_icdGetInstanceProcAddr" &&

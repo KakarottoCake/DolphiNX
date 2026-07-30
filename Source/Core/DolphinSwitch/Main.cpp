@@ -9,7 +9,6 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <memory>
 #include <mutex>
@@ -52,6 +51,7 @@
 #include "DolphinSwitch/Launcher.h"
 #include "DolphinSwitch/PerformanceManager.h"
 #include "DolphinSwitch/RuntimeOverlay.h"
+#include "DolphinSwitch/StartupLog.h"
 #include "DolphinSwitch/SystemLanguage.h"
 #include "InputCommon/ControllerEmu/ControlGroup/Attachments.h"
 #include "InputCommon/ControllerEmu/ControlGroup/ControlGroup.h"
@@ -72,7 +72,6 @@ size_t __nx_heap_size = 0;
 
 namespace
 {
-std::FILE* s_startup_log = nullptr;
 std::atomic<bool> s_session_running{false};
 std::atomic<bool> s_host_focused{true};
 std::atomic<bool> s_applet_exit_requested{false};
@@ -87,16 +86,6 @@ struct PendingAlert
 };
 
 std::vector<PendingAlert> s_pending_alerts;
-
-void LogStartupStage(const char* stage)
-{
-  if (!s_startup_log)
-    return;
-
-  std::fputs(stage, s_startup_log);
-  std::fputc('\n', s_startup_log);
-  std::fflush(s_startup_log);
-}
 
 std::optional<DolphinSwitch::LaunchRequest> GetDirectLaunchRequest(int argc, char** argv)
 {
@@ -548,7 +537,7 @@ void UpdateSessionPauseState(Core::System& system, bool focused, bool user_pause
 
 SessionResult RunGameSession(const DolphinSwitch::LaunchRequest& request)
 {
-  LogStartupStage("game: preparing session");
+  DolphinSwitch::LogStartupStage("game: preparing session");
   Core::System& system = Core::System::GetInstance();
   DolphinSwitch::LaunchRequest resolved_request = request;
 
@@ -564,7 +553,7 @@ SessionResult RunGameSession(const DolphinSwitch::LaunchRequest& request)
   const u32 height = docked ? 1080 : 720;
   (void)nwindowSetDimensions(window, width, height);
   const WindowSystemInfo wsi{WindowSystemType::Switch, nullptr, window, window};
-  LogStartupStage("game: initializing controllers");
+  DolphinSwitch::LogStartupStage("game: initializing controllers");
   UICommon::InitControllers(wsi);
   Common::ScopeGuard controller_guard([] { UICommon::ShutdownControllers(); });
 
@@ -598,15 +587,15 @@ SessionResult RunGameSession(const DolphinSwitch::LaunchRequest& request)
       s_session_running.store(false, std::memory_order_release);
   });
 
-  LogStartupStage("game: starting Dolphin core and Vulkan probe");
+  DolphinSwitch::LogStartupStage("game: starting Dolphin core and Vulkan probe");
   if (!BootManager::BootCore(system, std::move(boot), wsi))
   {
-    LogStartupStage("game: Dolphin core initialization failed");
+    DolphinSwitch::LogStartupStage("game: Dolphin core initialization failed");
     s_session_running.store(false, std::memory_order_release);
     return {false, CollectAlertText(
                        "Dolphin failed to initialize the selected title.")};
   }
-  LogStartupStage("game: Dolphin core initialized");
+  DolphinSwitch::LogStartupStage("game: Dolphin core initialized");
 
   RuntimeControllerSession runtime_controllers = CreateRuntimeControllerSession(system);
   DolphinSwitch::RuntimeOverlay::BeginSession(
@@ -835,16 +824,9 @@ SessionResult RunGameSession(const DolphinSwitch::LaunchRequest& request)
 
 int main(int argc, char** argv)
 {
-  s_startup_log = std::fopen("sdmc:/dolphinx-startup.log", "w");
-  Common::ScopeGuard startup_log_guard([] {
-    LogStartupStage("shutdown: clean exit");
-    if (s_startup_log)
-    {
-      std::fclose(s_startup_log);
-      s_startup_log = nullptr;
-    }
-  });
-  LogStartupStage("startup: entered main");
+  DolphinSwitch::InitializeStartupLog();
+  Common::ScopeGuard startup_log_guard([] { DolphinSwitch::ShutdownStartupLog(); });
+  DolphinSwitch::LogStartupStage("startup: entered main");
 
   Common::ScopeGuard audio_guard([] { DolphinSwitch::Audio::ShutdownSharedAudio(); });
 
@@ -852,7 +834,7 @@ int main(int argc, char** argv)
   // This opt-in must be visible before Dolphin probes the Vulkan backend.
   (void)setenv("NVK_I_WANT_A_BROKEN_VULKAN_DRIVER", "1", 0);
   (void)setenv("MESA_LOG_FILE", "sdmc:/dolphinx-mesa.log", 0);
-  LogStartupStage("startup: NVK environment configured");
+  DolphinSwitch::LogStartupStage("startup: NVK environment configured");
 
   u64 allowed_core_mask = 0;
   const Result core_mask_result =
@@ -864,7 +846,7 @@ int main(int argc, char** argv)
     Common::SetCurrentThreadName("Dolphin host");
     Common::SetCurrentThreadAffinity(2);
   }
-  LogStartupStage("startup: host thread configured");
+  DolphinSwitch::LogStartupStage("startup: host thread configured");
 
   const Result romfs_result = romfsInit();
   const bool romfs_initialized = R_SUCCEEDED(romfs_result);
@@ -875,10 +857,11 @@ int main(int argc, char** argv)
     if (sockets_initialized)
       nxlinkStdio();
   }
-  LogStartupStage(romfs_initialized ? "startup: romfs initialized" :
-                                      "startup: romfs initialization failed");
-  LogStartupStage(sockets_initialized ? "startup: nxlink networking initialized" :
-                                         "startup: networking skipped");
+  DolphinSwitch::LogStartupStage(romfs_initialized ? "startup: romfs initialized" :
+                                                     "startup: romfs initialization failed");
+  DolphinSwitch::LogStartupStage(sockets_initialized ?
+                                     "startup: nxlink networking initialized" :
+                                     "startup: networking skipped");
   Common::ScopeGuard platform_guard([&] {
     DolphinSwitch::ShutdownLauncherStorage();
     if (sockets_initialized)
@@ -892,9 +875,9 @@ int main(int argc, char** argv)
   File::SetSysDirectory("romfs:");
   UICommon::SetUserDirectory("sdmc:/switch/dolphin");
   (void)File::CreateDirs(File::GetUserPath(D_CONFIG_IDX));
-  LogStartupStage("startup: initializing Dolphin services");
+  DolphinSwitch::LogStartupStage("startup: initializing Dolphin services");
   UICommon::Init();
-  LogStartupStage("startup: Dolphin services initialized");
+  DolphinSwitch::LogStartupStage("startup: Dolphin services initialized");
   Common::ScopeGuard ui_common_guard([] { UICommon::Shutdown(); });
   if (Config::Get(Config::RA_ENABLED))
     AchievementManager::GetInstance().Init(nullptr);
@@ -910,7 +893,7 @@ int main(int argc, char** argv)
   // Do not initialize NVK before the launcher can render. Core::Init performs the same
   // backend probe when a game is launched, and keeping it there makes startup failures
   // diagnosable instead of crashing before the user sees the UI.
-  LogStartupStage("startup: deferred Vulkan probe until game launch");
+  DolphinSwitch::LogStartupStage("startup: deferred Vulkan probe until game launch");
   s_host_focused.store(appletGetFocusState() == AppletFocusState_InFocus,
                        std::memory_order_release);
   (void)appletSetFocusHandlingMode(AppletFocusHandlingMode_SuspendHomeSleepNotify);
@@ -935,9 +918,9 @@ int main(int argc, char** argv)
     }
     else
     {
-      LogStartupStage("launcher: entering UI");
+      DolphinSwitch::LogStartupStage("launcher: entering UI");
       request = DolphinSwitch::RunLauncher(std::move(launcher_message));
-      LogStartupStage("launcher: UI returned");
+      DolphinSwitch::LogStartupStage("launcher: UI returned");
       launcher_message.clear();
     }
 
@@ -946,7 +929,7 @@ int main(int argc, char** argv)
       break;
     }
 
-    LogStartupStage("launcher: game selected");
+    DolphinSwitch::LogStartupStage("launcher: game selected");
     const SessionResult result = RunGameSession(*request);
     if (result.exit_application)
       break;
