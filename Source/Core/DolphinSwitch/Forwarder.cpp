@@ -536,6 +536,9 @@ struct MetaResult {
 
 MetaResult create_meta_nca(u64 tid, const u8 *key, NcmStorageId storage_id, const std::vector<NcaEntry> &ncas)
 {
+    if (ncas.size() != 2)
+        return {};
+
     CnmtHeader cnmt_header{};
     NcmApplicationMetaExtendedHeader cnmt_extended{};
     NcmPackagedContentInfo packaged_content_info[2]{};
@@ -545,7 +548,7 @@ MetaResult create_meta_nca(u64 tid, const u8 *key, NcmStorageId storage_id, cons
     cnmt_header.title_version = 0;
     cnmt_header.meta_type = NcmContentMetaType_Application;
     cnmt_header.meta_header.extended_header_size = sizeof(cnmt_extended);
-    cnmt_header.meta_header.content_count = 0x2; // program + control
+    cnmt_header.meta_header.content_count = ncas.size(); // program + control
     cnmt_header.meta_header.content_meta_count = 0x1;
     cnmt_header.meta_header.attributes = 0x0;
     cnmt_header.meta_header.storage_id = storage_id;

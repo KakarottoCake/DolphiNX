@@ -9,6 +9,7 @@ DEVKITPRO="${DEVKITPRO:-/opt/devkitpro}"
 BIN="${DEVKITPRO}/devkitA64/bin"
 LD="${BIN}/aarch64-none-elf-ld"
 OBJCOPY="${BIN}/aarch64-none-elf-objcopy"
+NM="${BIN}/aarch64-none-elf-nm"
 
 if command -v bsdtar >/dev/null 2>&1; then
   BSDTAR="$(command -v bsdtar)"
@@ -20,7 +21,7 @@ else
 fi
 
 if [[ -z "${ZIP}" ]]; then
-  echo "Usage: $0 <mesa-switch-vulkan-sdk.zip|builddir-switch.zip> [output-directory]" >&2
+  echo "Usage: $0 <switch-nvk.zip|mesa-switch-vulkan-sdk.zip|builddir-switch.zip> [output-directory]" >&2
   echo "Alternatively set DOLPHIN_SWITCH_NVK_ZIP." >&2
   exit 1
 fi
@@ -100,6 +101,14 @@ SDK_ROOT="$(printf '%s\n' "${ARCHIVE_LIST}" | awk '
   }
 ')"
 SDK_PACKAGE=false
+HAYATOG_ROOT="$(printf '%s\n' "${ARCHIVE_LIST}" | awk '
+  !found && /\/lib\/libvulkan\.a$/ {
+    sub(/\/lib\/libvulkan\.a$/, "");
+    print;
+    found = 1;
+  }
+')"
+HAYATOG_PACKAGE=false
 
 echo "Extracting the required NVK archives ..."
 if [[ -n "${SDK_ROOT}" ]]; then
@@ -114,7 +123,15 @@ if [[ -n "${SDK_ROOT}" ]]; then
     cp "${STAGE}/${SDK_ROOT}/lib/${archive}" "${OUT}/lib/${archive}"
   done
   cp "${STAGE}/${SDK_ROOT}/share/nvk-switch/build-info.txt" "${OUT}/build-info.txt"
+  rm -f "${OUT}/flavor.txt"
   echo "Detected packaged NVK SDK: ${SDK_ROOT}"
+elif [[ -n "${HAYATOG_ROOT}" ]]; then
+  HAYATOG_PACKAGE=true
+  "${BSDTAR}" -xf "${ZIP}" -C "${STAGE}" "${HAYATOG_ROOT}/lib/libvulkan.a"
+  cp "${STAGE}/${HAYATOG_ROOT}/lib/libvulkan.a" "${OUT}/lib/libvulkan.a"
+  rm -f "${OUT}/build-info.txt"
+  printf '%s\n' "hayatog" > "${OUT}/flavor.txt"
+  echo "Detected HayatoG switch-nvk package: ${HAYATOG_ROOT}"
 else
   ZIP_PATHS=()
   for archive in "${LEGACY_ARCHIVES[@]}"; do
@@ -124,7 +141,7 @@ else
   for archive in "${LEGACY_ARCHIVES[@]}"; do
     cp "${STAGE}/builddir-switch/${archive}" "${OUT}/lib/$(basename "${archive}")"
   done
-  rm -f "${OUT}/lib/libmesa_util_simd.a" "${OUT}/build-info.txt"
+  rm -f "${OUT}/lib/libmesa_util_simd.a" "${OUT}/build-info.txt" "${OUT}/flavor.txt"
 fi
 
 LIB="${OUT}/lib"
@@ -133,11 +150,18 @@ if [[ -f "${LIB}/libmesa_util_simd.a" ]]; then
   SIMD_ARCHIVE+=("${LIB}/libmesa_util_simd.a")
 fi
 MERGED="${OUT}/libnvk_merged.o"
+RENAMED="${OUT}/libnvk_renamed.o"
+REDEFINE_MAP="${OUT}/redefine-syms.txt"
 LOCAL_TMP="${OUT}/libnvk_local.o.tmp"
 LOCAL="${OUT}/libnvk_local.o"
 
 echo "Merging the static NVK driver ..."
-if [[ "${SDK_PACKAGE}" == true ]]; then
+if [[ "${HAYATOG_PACKAGE}" == true ]]; then
+  "${LD}" -r \
+    --allow-multiple-definition \
+    --whole-archive "${LIB}/libvulkan.a" --no-whole-archive \
+    -o "${MERGED}"
+elif [[ "${SDK_PACKAGE}" == true ]]; then
   "${LD}" -r \
     --whole-archive "${LIB}/libnvk.a" --no-whole-archive \
     --start-group \
@@ -196,18 +220,45 @@ else
     -o "${MERGED}"
 fi
 
+LOCALIZE_INPUT="${MERGED}"
+if [[ "${HAYATOG_PACKAGE}" == true ]]; then
+  # The packaged driver and devkitPro's SDL/EGL stack contain different generations of
+  # Nouveau's C++ codegen. Give every private NVK definition a unique name before localization
+  # so ELF COMDAT selection cannot discard one generation's implementation in favor of the other.
+  "${NM}" -g --defined-only --format=posix "${MERGED}" |
+    awk '
+      $1 != "vk_icdGetInstanceProcAddr" &&
+      $1 != "vk_icdNegotiateLoaderICDInterfaceVersion" &&
+      $1 != "vk_icdGetPhysicalDeviceProcAddr" &&
+      $1 != "__wrap_open" &&
+      $1 != "__wrap_close" &&
+      $1 != "__wrap_stat" &&
+      $1 != "__wrap_lstat" &&
+      $1 != "__wrap_vk_icdGetInstanceProcAddr" {
+        print $1, "dolphin_nvk_local_" $1
+      }
+    ' > "${REDEFINE_MAP}"
+  "${OBJCOPY}" --redefine-syms="${REDEFINE_MAP}" "${MERGED}" "${RENAMED}"
+  LOCALIZE_INPUT="${RENAMED}"
+fi
+
 echo "Localizing NVK globals while retaining the Vulkan ICD entry points ..."
 "${OBJCOPY}" \
   --keep-global-symbol=vk_icdGetInstanceProcAddr \
   --keep-global-symbol=vk_icdNegotiateLoaderICDInterfaceVersion \
   --keep-global-symbol=vk_icdGetPhysicalDeviceProcAddr \
-  "${MERGED}" "${LOCAL_TMP}"
+  --keep-global-symbol=__wrap_open \
+  --keep-global-symbol=__wrap_close \
+  --keep-global-symbol=__wrap_stat \
+  --keep-global-symbol=__wrap_lstat \
+  --keep-global-symbol=__wrap_vk_icdGetInstanceProcAddr \
+  "${LOCALIZE_INPUT}" "${LOCAL_TMP}"
 
 if [[ ! -f "${LOCAL}" ]] || ! cmp -s "${LOCAL_TMP}" "${LOCAL}"; then
   mv -f "${LOCAL_TMP}" "${LOCAL}"
 else
   rm -f "${LOCAL_TMP}"
 fi
-rm -f "${MERGED}"
+rm -f "${MERGED}" "${RENAMED}" "${REDEFINE_MAP}"
 
 echo "Prepared ${LOCAL}"

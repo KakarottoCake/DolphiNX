@@ -818,6 +818,10 @@ int main(int argc, char** argv)
 {
   Common::ScopeGuard audio_guard([] { DolphinSwitch::Audio::ShutdownSharedAudio(); });
 
+  // GM20B (the Switch's Maxwell GPU) is intentionally gated by upstream NVK.
+  // This opt-in must be visible before Dolphin probes the Vulkan backend.
+  (void)setenv("NVK_I_WANT_A_BROKEN_VULKAN_DRIVER", "1", 0);
+
   u64 allowed_core_mask = 0;
   const Result core_mask_result =
       svcGetInfo(&allowed_core_mask, InfoType_CoreMask, CUR_PROCESS_HANDLE, 0);
