@@ -65,6 +65,7 @@
 #include "DolphinSwitch/Forwarder.h"
 #include "DolphinSwitch/PerformanceManager.h"
 #include "DolphinSwitch/Storage.h"
+#include "DolphinSwitch/StartupLog.h"
 #include "DolphinSwitch/SystemLanguage.h"
 #include "DolphinSwitch/UiAudio.h"
 #include "InputCommon/ControllerInterface/Switch/Switch.h"
@@ -1550,7 +1551,9 @@ void Launcher::FlushPendingSaves()
 
 bool Launcher::Initialize()
 {
+  LogStartupStage("launcher init: entered");
   ClearControllerValueCache();
+  LogStartupStage("launcher init: controller cache cleared");
   constexpr std::array<std::string_view, 4> directories = {
       "sdmc:/switch", DATA_DIRECTORY, COVER_DIRECTORY, LSFG_DIRECTORY};
   for (const std::string_view path : directories)
@@ -1558,44 +1561,60 @@ bool Launcher::Initialize()
     if (!EnsureDirectory(path))
       return false;
   }
+  LogStartupStage("launcher init: directories ready");
 
   (void)m_store.Load(std::string(CONFIG_PATH));
   LoadDefaults();
+  LogStartupStage("launcher init: settings loaded");
   SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
   SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
+  LogStartupStage("launcher init: starting SDL");
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) != 0)
     return false;
   m_sdl_ready = true;
-  InitializeUiAudio();
+  LogStartupStage("launcher init: SDL ready");
+  (void)InitializeUiAudio();
+  LogStartupStage("launcher init: audio attempted");
   SetUiAudioEnabled(m_store.GetBool("Launcher/Sounds", true));
+  LogStartupStage("launcher init: starting fonts");
   if (TTF_Init() != 0)
     return false;
   m_ttf_ready = true;
+  LogStartupStage("launcher init: fonts ready");
   const int image_flags = IMG_INIT_PNG | IMG_INIT_JPG;
+  LogStartupStage("launcher init: starting image codecs");
   if ((IMG_Init(image_flags) & image_flags) != image_flags)
     return false;
   m_image_ready = true;
+  LogStartupStage("launcher init: image codecs ready");
 
   if (appletGetOperationMode() == AppletOperationMode_Console)
   {
     m_width = 1920;
     m_height = 1080;
   }
+  LogStartupStage("launcher init: creating window");
   m_window = SDL_CreateWindow("Dolphin", 0, 0, m_width, m_height, SDL_WINDOW_FULLSCREEN);
   if (!m_window)
     return false;
+  LogStartupStage("launcher init: window ready");
+  LogStartupStage("launcher init: creating renderer");
   m_renderer =
       SDL_CreateRenderer(m_window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
   if (!m_renderer)
     return false;
+  LogStartupStage("launcher init: renderer ready");
   SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
   SDL_GetRendererOutputSize(m_renderer, &m_width, &m_height);
 
+  LogStartupStage("launcher init: starting shared font service");
   const Result pl_result = plInitialize(PlServiceType_User);
   if (R_FAILED(pl_result))
     return false;
   m_font_service_ready = true;
+  LogStartupStage("launcher init: shared font service ready");
   PlFontData font_data{};
+  LogStartupStage("launcher init: loading shared font");
   if (R_FAILED(plGetSharedFontByType(&font_data, PlSharedFontType_Standard)) ||
       !font_data.address || font_data.size == 0 || font_data.size > INT_MAX)
     return false;
@@ -1609,14 +1628,17 @@ bool Launcher::Initialize()
   m_font_large = open_font(large ? 52 : 40);
   if (!m_font_small || !m_font || !m_font_large)
     return false;
+  LogStartupStage("launcher init: shared fonts ready");
 
   InitializeUiTextures();
+  LogStartupStage("launcher init: UI textures ready");
 
   if (SDL_Surface* surface = IMG_Load("romfs:/Resources/dolphin_logo.png"))
   {
     m_logo = SDL_CreateTextureFromSurface(m_renderer, surface);
     SDL_FreeSurface(surface);
   }
+  LogStartupStage("launcher init: logo attempted");
   for (int index = 0; index < SDL_NumJoysticks(); ++index)
   {
     if (SDL_IsGameController(index))
@@ -1625,9 +1647,13 @@ bool Launcher::Initialize()
       break;
     }
   }
+  LogStartupStage("launcher init: controller attempted");
   m_cover_download_ready = CoverDownload::Initialize();
+  LogStartupStage("launcher init: cover service attempted");
   ApplyAppearance();
+  LogStartupStage("launcher init: appearance applied");
   LoadSourcesAndShares();
+  LogStartupStage("launcher init: complete");
   return true;
 }
 
@@ -11983,14 +12009,18 @@ void Launcher::PerGameMenu(Game* game, bool* launch, bool* rescan)
 
 std::optional<LaunchRequest> Launcher::Run()
 {
+  LogStartupStage("launcher run: entered");
   if (!Initialize())
   {
+    LogStartupStage("launcher run: initialization returned failure");
     if (m_sdl_ready)
       SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Dolphin Launcher",
                                "The full SDL launcher could not be initialized.", m_window);
     return std::nullopt;
   }
+  LogStartupStage("launcher run: scanning games");
   ScanGames();
+  LogStartupStage("launcher run: game scan complete");
   if (!m_startup_message.empty())
   {
     RenderMessage("Dolphin", std::array<std::string, 1>{m_startup_message});
@@ -12011,6 +12041,8 @@ std::optional<LaunchRequest> Launcher::Run()
     }
   };
 
+  LogStartupStage("launcher run: entering frame loop");
+  bool first_frame_logged = false;
   while (BeginFrame() && !launch && !m_pending_launch)
   {
     const Uint32 now = SDL_GetTicks();
@@ -12128,6 +12160,11 @@ std::optional<LaunchRequest> Launcher::Run()
     if (!m_running)
       break;
     RenderGrid(selection);
+    if (!first_frame_logged)
+    {
+      LogStartupStage("launcher run: first frame rendered");
+      first_frame_logged = true;
+    }
     SDL_Delay(8);
   }
 
