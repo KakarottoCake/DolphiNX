@@ -18,6 +18,24 @@ scheduling for the console's Cortex-A57 CPU. Release builds use Dolphin's existi
 port deliberately does not enable broad unsafe-math flags: those can trade away emulation accuracy
 and make compatibility failures difficult to diagnose.
 
+## Running and startup diagnostics
+
+Dolphin requires full application memory. Launch the Homebrew Menu with title takeover (normally by
+holding **R** while starting an installed game), then start Dolphin. Do not launch it from the Album
+applet. An installed full-application forwarder is also suitable.
+
+The diagnostic startup path writes `sdmc:/dolphinx-startup.log` and flushes every completed stage.
+Mesa/NVK messages go to `sdmc:/dolphinx-mesa.log`. If Dolphin exits:
+
+- no startup log means execution failed before `main`, commonly because it was launched as an
+  applet rather than through title takeover;
+- a log ending before `launcher: entering UI` identifies the last completed service stage;
+- a log ending at `game: starting Dolphin core and Vulkan probe` isolates the failure to graphics
+  initialization.
+
+Normal menu launches currently leave networking off because libnx socket initialization was one of
+the original pre-UI crash candidates. An nxlink launch initializes networking for live diagnostics.
+
 ## Host performance profiles
 
 Host clock profiles use the API v4 IPC service supplied by
