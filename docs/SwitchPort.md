@@ -118,6 +118,17 @@ synchronization, or I/O stalls.
 Do not treat frame generation as a pass. It may improve display fluidity, but the emulator-speed
 column must independently remain at full speed.
 
+The first Erista hardware capture (`GMSE04`, handheld, stock clocks, commit `9b8a794708`) averaged
+27.8% emulation speed and 7.7 rendered FPS after warm-up. Temperatures remained below 42 C and no
+thermal guard activated. Raw render times contained sustained 70-150 ms frames and repeated
+200-380 ms stalls. This is far beyond what safe clocks can recover.
+
+That capture identified an unconditional `nvFenceWait` after every successful `EXEC` in the pinned
+switch-nvk winsys. It was useful while bringing up the smoke test, but it fully serialized CPU and
+GPU work. DolphiNX carries `Tools/Switch/patches/switch-nvk-async-submit.patch` to return after
+queueing work while retaining the completion fence on Vulkan signal sync objects. Explicit
+dependencies and queue/device-idle operations still wait through `drmSyncobjWait`.
+
 ## Building
 
 Requirements:
@@ -145,10 +156,14 @@ The checksum is optional for local experimentation and strongly recommended for 
 The output is `build-switch/Binaries/dolphin.nro`. Override the package version with
 `DOLPHIN_SWITCH_VERSION`.
 
-The initial pre-release uses switch-nvk commit
+The initial pre-release used switch-nvk commit
 `6eec707da3ad5f86c64f748226583202801bfd03` with Mesa 25.0.7. HayatoG's package includes the
 Nouveau DRM, NWindow WSI, and loaderless Vulkan shims in one static archive; the build detects that
 layout and avoids linking the donor port's older standalone DRM archive.
+
+Performance builds retain that pinned source and Mesa version, then apply the asynchronous-submit
+patch above before running switch-nvk's `package-nvk.sh`. The resulting archive's build information
+is recorded in `Tools/Switch/switch-nvk-async-build-info.txt`.
 
 ## Keeping up with Dolphin
 

@@ -1,0 +1,10 @@
+upstream=https://github.com/HayatoG/switch-nvk
+upstream_commit=6eec707da3ad5f86c64f748226583202801bfd03
+mesa_version=25.0.7
+dolphinx_patch=Tools/Switch/patches/switch-nvk-async-submit.patch
+submission_model=asynchronous
+
+The DolphiNX patch removes switch-nvk's unconditional nvFenceWait and error-query
+diagnostics after each successful EXEC. Submitted work retains its NvFence on
+the Vulkan signal sync objects, so explicit dependencies and queue/device idle
+operations continue to wait through drmSyncobjWait.
