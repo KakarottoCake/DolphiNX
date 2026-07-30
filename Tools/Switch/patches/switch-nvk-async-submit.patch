@@ -1,0 +1,62 @@
+diff --git a/winsys/drm_shim.c b/winsys/drm_shim.c
+index 5f53f36..fcfb45f 100644
+--- a/winsys/drm_shim.c
++++ b/winsys/drm_shim.c
+@@ -972,52 +972,11 @@ static int nouveau_exec(struct drm_nouveau_exec *req)
+       if (s) { s->fence = fence; s->has_fence = true; s->signaled = true; }
+    }
+ 
+-   /* Drain: wait for THIS submit's GPU work to finish before returning, so the
+-    * NEXT submit starts on an idle channel (fixes the case where a prior big
+-    * submit is still in-flight holding kernel resources -> next submit 0xd5c),
+-    * and so a GPU EXECUTION fault shows up here as a timeout instead of as a
+-    * mysterious failure of the following submit.
+-    * NB: nvFenceWait timeout is in MICROSECONDS (not ns!). 2e6 us = 2s.
+-    * (was 2e9 here = 2000s = ~33min => looked like an infinite hang on a
+-    * channel whose init EXEC never completes its end-of-submit syncpt incr). */
+-   Result wr = nvFenceWait(&fence, 2000000LL);
+-   SHIM_LOG("EXEC drain chan=%u fence=%u/%u rc=0x%x\n",
+-            (unsigned)req->channel, fence.id, fence.value, wr);
+-
+-   /* DIAG: read the CURRENT syncpt value vs the target. On a drain TIMEOUT this
+-    * pinpoints WHERE the GPU work stalled: current≈0 => the init never started /
+-    * stalls at the very front; current≈target => it stalls at a FINAL wait. (No
+-    * channel reset here means the syncpt is NOT force-advanced, so this is the
+-    * true progress.) */
+-   {
+-      u32 cur = 0;
+-      Result srr = nvioctlNvhostCtrl_SyncptRead(nvFenceGetFd(), fence.id, &cur);
+-      SHIM_LOG("EXEC drain syncpt[%u] current=%u target=%u reached=%d readrc=0x%x\n",
+-               fence.id, (unsigned)cur, fence.value,
+-               (int)(cur >= fence.value), srr);
+-   }
+-
+-   /* Read the channel error notifier: the kickoff is accepted (rc=0) but the
+-    * GPU executes ASYNC and may FAULT (MMU fault / illegal method / PBDMA err),
+-    * which resets the channel and makes every later submit return Timeout
+-    * (0xd5c). info32 = NvNotificationType: 31=MMU fault, 25=GR illegal-method,
+-    * 32=PBDMA error, 8=idle timeout, 13=GR SW notify, 0=no fault. */
+-   NvNotification notif = {0};
+-   if (R_SUCCEEDED(nvGpuChannelGetErrorNotification(&ch->chan, &notif)) &&
+-       (notif.info32 || notif.info16)) {
+-      SHIM_LOG("EXEC ERRNOTIF chan=%u type=%u info16=%u (31=MMU 25=illegal 32=PBDMA 8=idle)\n",
+-               (unsigned)req->channel, notif.info32, notif.info16);
+-      /* Dump the detailed error info — for an MMU fault (type 31) this carries
+-       * the FAULTING GPU VA (+ engine/client/reason), which tells us EXACTLY
+-       * which buffer the 3D init dereferenced that we didn't map. */
+-      NvError err;
+-      memset(&err, 0, sizeof(err));
+-      if (R_SUCCEEDED(nvGpuChannelGetErrorInfo(&ch->chan, &err)))
+-         SHIM_LOG("EXEC ERRINFO type=%u info: %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x\n",
+-                  err.type, err.info[0], err.info[1], err.info[2], err.info[3],
+-                  err.info[4], err.info[5], err.info[6], err.info[7],
+-                  err.info[8], err.info[9], err.info[10], err.info[11]);
+-   }
++   /* Production path: return as soon as the work is queued. The fence remains
++    * attached to every signal syncobj above, so explicit Vulkan dependencies,
++    * queue-idle waits, and CPU waits still block in drmSyncobjWait. Draining
++    * here serializes every submission and prevents the CPU and GPU from
++    * overlapping, which is catastrophically slow for a real application. */
+ 
+    return 0;
+ }
