@@ -15,11 +15,13 @@
 
 #ifdef __SWITCH__
 #include <atomic>
+#include <cstdio>
 
 #include <switch.h>
 
 static std::atomic<uintptr_t> s_lazy_region_base{0};
 static std::atomic<size_t> s_lazy_region_size{0};
+static std::atomic_flag s_writing_crash_log = ATOMIC_FLAG_INIT;
 
 void EMM::SetLazyRegionInfo(uintptr_t base, size_t size)
 {
@@ -479,6 +481,37 @@ extern "C" void __libnx_exception_handler(ThreadExceptionDump* ctx)
     ctx->sp.x = sctx.sp;
 
     RestoreContextAndJump(ctx);
+  }
+
+  // An unhandled Switch exception used to terminate the process without leaving
+  // any evidence. Keep this allocation-free apart from stdio's internal state:
+  // it runs in a compromised process and must not depend on Dolphin's logger.
+  if (!s_writing_crash_log.test_and_set(std::memory_order_relaxed))
+  {
+    std::FILE* crash_log = std::fopen("sdmc:/switch/dolphin/dolphinx-crash.log", "a");
+    if (crash_log == nullptr)
+      crash_log = std::fopen("sdmc:/dolphinx-crash.log", "a");
+
+    if (crash_log != nullptr)
+    {
+      std::fprintf(crash_log, "\n=== unhandled Horizon exception ===\n");
+      std::fprintf(crash_log, "FAR=%016llx PC=%016llx LR=%016llx SP=%016llx PSTATE=%016llx\n",
+                   static_cast<unsigned long long>(ctx->far.x),
+                   static_cast<unsigned long long>(ctx->pc.x),
+                   static_cast<unsigned long long>(ctx->lr.x),
+                   static_cast<unsigned long long>(ctx->sp.x),
+                   static_cast<unsigned long long>(ctx->pstate));
+      for (int i = 0; i < 29; ++i)
+      {
+        std::fprintf(crash_log, "X%02d=%016llx%c", i,
+                     static_cast<unsigned long long>(ctx->cpu_gprs[i].x),
+                     i % 2 == 1 ? '\n' : ' ');
+      }
+      std::fprintf(crash_log, "\nFP=%016llx\n",
+                   static_cast<unsigned long long>(ctx->fp.x));
+      std::fflush(crash_log);
+      std::fclose(crash_log);
+    }
   }
 
   svcExitProcess();

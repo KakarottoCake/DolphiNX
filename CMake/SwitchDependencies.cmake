@@ -28,6 +28,9 @@ pkg_check_modules(SwitchSDL2ImagePkg REQUIRED IMPORTED_TARGET SDL2_image)
 pkg_check_modules(SwitchCurlPkg REQUIRED IMPORTED_TARGET libcurl)
 if(DOLPHIN_SWITCH_NVK_FLAVOR STREQUAL "hayatog")
   pkg_check_modules(SwitchExpatPkg REQUIRED IMPORTED_TARGET expat)
+  # Mesa 26 compresses its shader/disk cache with zstd, so the driver object now pulls in
+  # ZSTD_compress/ZSTD_decompress. (Mesa 25 did not.)
+  pkg_check_modules(SwitchZstdPkg REQUIRED IMPORTED_TARGET libzstd)
 endif()
 
 add_library(SwitchSDL2 INTERFACE)
@@ -77,7 +80,7 @@ set_target_properties(SwitchNVK PROPERTIES
   IMPORTED_LOCATION "${DOLPHIN_SWITCH_NVK_OBJECT}"
 )
 if(DOLPHIN_SWITCH_NVK_FLAVOR STREQUAL "hayatog")
-  target_link_libraries(SwitchNVK INTERFACE PkgConfig::SwitchExpatPkg)
+  target_link_libraries(SwitchNVK INTERFACE PkgConfig::SwitchExpatPkg PkgConfig::SwitchZstdPkg)
   target_link_options(SwitchNVK INTERFACE
     -Wl,--wrap=open
     -Wl,--wrap=close

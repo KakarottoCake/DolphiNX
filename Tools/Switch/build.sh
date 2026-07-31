@@ -48,7 +48,7 @@ if [[ -n "${NVK_SHA256}" ]]; then
 fi
 
 MISSING_PACKAGES=()
-for package in sdl2 SDL2_ttf SDL2_image libcurl expat; do
+for package in sdl2 SDL2_ttf SDL2_image libcurl expat libzstd; do
   if ! PKG_CONFIG_PATH="${DEVKITPRO}/portlibs/switch/lib/pkgconfig" \
        pkg-config --exists "${package}"; then
     MISSING_PACKAGES+=("${package}")
