@@ -3,6 +3,8 @@
 
 #include "VideoBackends/Vulkan/VulkanContext.h"
 
+#include "VideoBackends/Vulkan/SwitchVkDiag.h"
+
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -903,12 +905,48 @@ bool VulkanContext::CreateAllocator(u32 vk_api_version)
   if (SupportsDeviceExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME))
     allocator_info.flags |= VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
 
+  const bool memory_budget_enabled =
+      (allocator_info.flags & VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT) != 0;
+
   VkResult res = vmaCreateAllocator(&allocator_info, &m_allocator);
   if (res != VK_SUCCESS)
   {
     LOG_VULKAN_ERROR(res, "vmaCreateAllocator failed: ");
     return false;
   }
+
+#ifdef __SWITCH__
+  // Dump what the driver actually reports. A backend that will not start is almost always a
+  // disagreement between these numbers and what VMA is asked for, and none of it is observable
+  // on device otherwise.
+  if (vkGetPhysicalDeviceMemoryProperties2)
+  {
+    VkPhysicalDeviceMemoryProperties2 props = {};
+    props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT budget = {};
+    budget.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+    if (memory_budget_enabled)
+      props.pNext = &budget;
+    vkGetPhysicalDeviceMemoryProperties2(m_physical_device, &props);
+
+    const VkPhysicalDeviceMemoryProperties& mp = props.memoryProperties;
+    SWITCH_VK_DIAG("=== memory report (budget ext %s) ===",
+                   memory_budget_enabled ? "ENABLED" : "disabled");
+    for (uint32_t i = 0; i < mp.memoryHeapCount; i++)
+    {
+      SWITCH_VK_DIAG("heap %u size=%llu flags=0x%x budget=%llu usage=%llu", i,
+                     static_cast<unsigned long long>(mp.memoryHeaps[i].size),
+                     static_cast<unsigned>(mp.memoryHeaps[i].flags),
+                     static_cast<unsigned long long>(budget.heapBudget[i]),
+                     static_cast<unsigned long long>(budget.heapUsage[i]));
+    }
+    for (uint32_t i = 0; i < mp.memoryTypeCount; i++)
+    {
+      SWITCH_VK_DIAG("type %u heap=%u propertyFlags=0x%x", i, mp.memoryTypes[i].heapIndex,
+                     static_cast<unsigned>(mp.memoryTypes[i].propertyFlags));
+    }
+  }
+#endif
 
   return true;
 }
