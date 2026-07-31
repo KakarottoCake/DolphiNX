@@ -4,12 +4,16 @@
 #include "DolphinSwitch/StartupLog.h"
 
 #include <cstdio>
+#include <mutex>
 
 namespace DolphinSwitch
 {
 namespace
 {
 std::FILE* s_startup_log = nullptr;
+// Boot-time stages come from the host thread, but alerts and core state changes are raised from
+// emulation threads, so serialize writes to keep lines from interleaving.
+std::mutex s_startup_log_mutex;
 }
 
 void InitializeStartupLog()
@@ -20,6 +24,7 @@ void InitializeStartupLog()
 
 void LogStartupStage(const char* stage)
 {
+  std::lock_guard lock{s_startup_log_mutex};
   if (!s_startup_log)
     return;
 
