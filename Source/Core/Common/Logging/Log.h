@@ -117,10 +117,18 @@ void GenericLogFmt(LogLevel level, LogType type, const char* file, int line, con
 // fmtlib capable API
 
 #ifdef __SWITCH__
+/* This used to be `if constexpr (false)`, which deleted every log call from the binary. On a device
+ * where attaching a debugger is not an option, that hid the reason for every backend failure -- and
+ * it is why several failures in this port were diagnosed by guesswork rather than by reading the
+ * error the code was already producing.
+ *
+ * Logging is filtered at runtime regardless: LogManager::IsEnabled() checks a per-type flag, and
+ * this port leaves every type disabled by default, so keeping the calls costs a predictable branch
+ * instead of the information. */
 #define GENERIC_LOG_FMT(t, v, format, ...)                                                         \
   do                                                                                               \
   {                                                                                                \
-    if constexpr (false)                                                                           \
+    if (v <= Common::Log::MAX_EFFECTIVE_LOGLEVEL)                                                  \
     {                                                                                              \
       constexpr auto GENERIC_LOG_FMT_N = Common::CountFmtReplacementFields(format);                \
       Common::Log::GenericLogFmt<GENERIC_LOG_FMT_N>(                                               \
