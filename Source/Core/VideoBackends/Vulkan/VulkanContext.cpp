@@ -929,20 +929,57 @@ bool VulkanContext::CreateAllocator(u32 vk_api_version)
       props.pNext = &budget;
     vkGetPhysicalDeviceMemoryProperties2(m_physical_device, &props);
 
-    const VkPhysicalDeviceMemoryProperties& mp = props.memoryProperties;
-    SWITCH_VK_DIAG("=== memory report (budget ext %s) ===",
-                   memory_budget_enabled ? "ENABLED" : "disabled");
-    for (uint32_t i = 0; i < mp.memoryHeapCount; i++)
+    // The v2 report came back incoherent (memory types appearing at heap offsets), which points
+    // at vkGetPhysicalDeviceMemoryProperties2 dispatching to the v1 entry point: v1 would write
+    // VkPhysicalDeviceMemoryProperties at the base of the v2 struct, 16 bytes ahead of where
+    // .memoryProperties actually lives. Log both, plus the resolved pointers, to settle it.
+    // VMA itself uses v1 when the budget extension is absent, so v1 is the view that matters.
+    SWITCH_VK_DIAG("fn v1=%p v2=%p gipa=%p",
+                   reinterpret_cast<void*>(vkGetPhysicalDeviceMemoryProperties),
+                   reinterpret_cast<void*>(vkGetPhysicalDeviceMemoryProperties2),
+                   reinterpret_cast<void*>(vkGetInstanceProcAddr));
+    if (vkGetInstanceProcAddr)
     {
-      SWITCH_VK_DIAG("heap %u size=%llu flags=0x%x budget=%llu usage=%llu", i,
+      SWITCH_VK_DIAG("gipa v1=%p gipa v2=%p gipa v2KHR=%p",
+                     reinterpret_cast<void*>(vkGetInstanceProcAddr(
+                         m_instance, "vkGetPhysicalDeviceMemoryProperties")),
+                     reinterpret_cast<void*>(vkGetInstanceProcAddr(
+                         m_instance, "vkGetPhysicalDeviceMemoryProperties2")),
+                     reinterpret_cast<void*>(vkGetInstanceProcAddr(
+                         m_instance, "vkGetPhysicalDeviceMemoryProperties2KHR")));
+    }
+
+    VkPhysicalDeviceMemoryProperties mp1 = {};
+    vkGetPhysicalDeviceMemoryProperties(m_physical_device, &mp1);
+    SWITCH_VK_DIAG("=== v1 report: typeCount=%u heapCount=%u ===", mp1.memoryTypeCount,
+                   mp1.memoryHeapCount);
+    for (uint32_t i = 0; i < mp1.memoryHeapCount && i < VK_MAX_MEMORY_HEAPS; i++)
+    {
+      SWITCH_VK_DIAG("v1 heap %u size=%llu flags=0x%x", i,
+                     static_cast<unsigned long long>(mp1.memoryHeaps[i].size),
+                     static_cast<unsigned>(mp1.memoryHeaps[i].flags));
+    }
+    for (uint32_t i = 0; i < mp1.memoryTypeCount && i < VK_MAX_MEMORY_TYPES; i++)
+    {
+      SWITCH_VK_DIAG("v1 type %u heap=%u propertyFlags=0x%x", i, mp1.memoryTypes[i].heapIndex,
+                     static_cast<unsigned>(mp1.memoryTypes[i].propertyFlags));
+    }
+
+    const VkPhysicalDeviceMemoryProperties& mp = props.memoryProperties;
+    SWITCH_VK_DIAG("=== v2 report (budget ext %s) typeCount=%u heapCount=%u ===",
+                   memory_budget_enabled ? "ENABLED" : "disabled", mp.memoryTypeCount,
+                   mp.memoryHeapCount);
+    for (uint32_t i = 0; i < mp.memoryHeapCount && i < VK_MAX_MEMORY_HEAPS; i++)
+    {
+      SWITCH_VK_DIAG("v2 heap %u size=%llu flags=0x%x budget=%llu usage=%llu", i,
                      static_cast<unsigned long long>(mp.memoryHeaps[i].size),
                      static_cast<unsigned>(mp.memoryHeaps[i].flags),
                      static_cast<unsigned long long>(budget.heapBudget[i]),
                      static_cast<unsigned long long>(budget.heapUsage[i]));
     }
-    for (uint32_t i = 0; i < mp.memoryTypeCount; i++)
+    for (uint32_t i = 0; i < mp.memoryTypeCount && i < VK_MAX_MEMORY_TYPES; i++)
     {
-      SWITCH_VK_DIAG("type %u heap=%u propertyFlags=0x%x", i, mp.memoryTypes[i].heapIndex,
+      SWITCH_VK_DIAG("v2 type %u heap=%u propertyFlags=0x%x", i, mp.memoryTypes[i].heapIndex,
                      static_cast<unsigned>(mp.memoryTypes[i].propertyFlags));
     }
   }
