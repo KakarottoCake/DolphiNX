@@ -51,6 +51,9 @@
 #include "DolphinSwitch/Launcher.h"
 #include "DolphinSwitch/PerformanceManager.h"
 #include "DolphinSwitch/RuntimeOverlay.h"
+#include "Common/Logging/Log.h"
+#include "Common/Logging/LogManager.h"
+
 #include "DolphinSwitch/StartupLog.h"
 #include "DolphinSwitch/SystemLanguage.h"
 #include "InputCommon/ControllerEmu/ControlGroup/Attachments.h"
@@ -903,6 +906,18 @@ int main(int argc, char** argv)
   (void)File::CreateDirs(File::GetUserPath(D_CONFIG_IDX));
   DolphinSwitch::LogStartupStage("startup: initializing Dolphin services");
   UICommon::Init();
+
+  // Dolphin's own logging has never been written to disk on this port, so every ERROR_LOG_FMT the
+  // video backend emits -- including the specific reason Vulkan device creation fails -- has been
+  // discarded. On a device that is only reachable by asking someone to copy files off an SD card,
+  // that makes failures cost a round trip each to diagnose. Turn the file listener on.
+  if (auto* log_manager = Common::Log::LogManager::GetInstance())
+  {
+    log_manager->SetConfigLogLevel(Common::Log::LogLevel::LINFO);
+    log_manager->EnableListener(Common::Log::LogListener::FILE_LISTENER, true);
+    for (int i = 0; i < static_cast<int>(Common::Log::LogType::NUMBER_OF_LOGS); ++i)
+      log_manager->SetEnable(static_cast<Common::Log::LogType>(i), true);
+  }
   DolphinSwitch::LogStartupStage("startup: Dolphin services initialized");
   Common::ScopeGuard ui_common_guard([] { UICommon::Shutdown(); });
   if (Config::Get(Config::RA_ENABLED))
