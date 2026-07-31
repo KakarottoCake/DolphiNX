@@ -8,7 +8,6 @@
 #include "Common/MsgHandler.h"
 
 #include "VideoBackends/Vulkan/CommandBufferManager.h"
-#include "VideoBackends/Vulkan/SwitchVkDiag.h"
 #include "VideoBackends/Vulkan/VulkanContext.h"
 
 namespace Vulkan
@@ -67,20 +66,8 @@ bool StreamBuffer::AllocateBuffer()
   if (res != VK_SUCCESS)
   {
     LOG_VULKAN_ERROR(res, "vmaCreateBuffer failed: ");
-    SWITCH_VK_DIAG("vmaCreateBuffer FAILED res=%d size=%u usage=0x%x", static_cast<int>(res),
-                   m_size, static_cast<unsigned>(m_usage));
-    // Ask VMA directly which memory type it would pick. This separates "VMA sees no usable memory
-    // type" (its own properties view is wrong) from a failure later in the allocation itself.
-    uint32_t type_index = 0;
-    const VkResult find_res = vmaFindMemoryTypeIndexForBufferInfo(
-        g_vulkan_context->GetMemoryAllocator(), &buffer_create_info, &alloc_create_info,
-        &type_index);
-    SWITCH_VK_DIAG("vmaFindMemoryTypeIndexForBufferInfo res=%d typeIndex=%u",
-                   static_cast<int>(find_res), type_index);
     return false;
   }
-  SWITCH_VK_DIAG("vmaCreateBuffer ok size=%u usage=0x%x memoryType=%u", m_size,
-                 static_cast<unsigned>(m_usage), alloc_info.memoryType);
 
   // Destroy the backings for the buffer after the command buffer executes
   // VMA_ALLOCATION_CREATE_MAPPED_BIT automatically handles unmapping for us
