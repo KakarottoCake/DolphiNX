@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <memory>
 #include <mutex>
@@ -72,6 +73,37 @@ extern "C"
 u32 __nx_applet_type = AppletType_Application;
 size_t __nx_heap_size = 0;
 }
+
+namespace DolphinSwitch
+{
+// Writes Dolphin's log lines straight to the SD card. Line buffered and flushed per message so the
+// last line before a crash is not the one that gets lost.
+class SdCardLogListener final : public Common::Log::LogListener
+{
+public:
+  explicit SdCardLogListener(const char* path) : m_file(std::fopen(path, "w")) {}
+
+  ~SdCardLogListener() override
+  {
+    if (m_file)
+      std::fclose(m_file);
+  }
+
+  void Log(Common::Log::LogLevel level, const char* msg) override
+  {
+    if (!m_file || !msg)
+      return;
+
+    std::lock_guard lock{m_mutex};
+    std::fputs(msg, m_file);
+    std::fflush(m_file);
+  }
+
+private:
+  std::FILE* m_file = nullptr;
+  std::mutex m_mutex;
+};
+}  // namespace DolphinSwitch
 
 namespace
 {
@@ -909,12 +941,21 @@ int main(int argc, char** argv)
 
   // Dolphin's own logging has never been written to disk on this port, so every ERROR_LOG_FMT the
   // video backend emits -- including the specific reason Vulkan device creation fails -- has been
-  // discarded. On a device that is only reachable by asking someone to copy files off an SD card,
-  // that makes failures cost a round trip each to diagnose. Turn the file listener on.
+  // discarded. On a device only reachable by asking someone to copy files off an SD card, that
+  // makes every failure cost a round trip to diagnose.
+  //
+  // Dolphin's own FileLogListener cannot be relied on here: it opens
+  // User/Logs/dolphin.log, and UICommon::CreateDirectories() -- which creates that directory -- is
+  // never called by UICommon::Init(). The open fails silently and nothing is written. Rather than
+  // depend on that, substitute a listener writing to the SD card root, which is the same path the
+  // startup log already uses successfully.
   if (auto* log_manager = Common::Log::LogManager::GetInstance())
   {
-    log_manager->SetConfigLogLevel(Common::Log::LogLevel::LINFO);
+    log_manager->RegisterListener(Common::Log::LogListener::FILE_LISTENER,
+                                  std::make_unique<DolphinSwitch::SdCardLogListener>(
+                                      "sdmc:/dolphinx-dolphin.log"));
     log_manager->EnableListener(Common::Log::LogListener::FILE_LISTENER, true);
+    log_manager->SetConfigLogLevel(Common::Log::LogLevel::LINFO);
     for (int i = 0; i < static_cast<int>(Common::Log::LogType::NUMBER_OF_LOGS); ++i)
       log_manager->SetEnable(static_cast<Common::Log::LogType>(i), true);
   }
