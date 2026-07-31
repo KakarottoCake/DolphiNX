@@ -15,6 +15,7 @@
 
 #ifdef __SWITCH__
 #include <atomic>
+#include <cstdint>
 #include <cstdio>
 
 #include <switch.h>
@@ -509,6 +510,39 @@ extern "C" void __libnx_exception_handler(ThreadExceptionDump* ctx)
       }
       std::fprintf(crash_log, "\nFP=%016llx\n",
                    static_cast<unsigned long long>(ctx->fp.x));
+
+      // Horizon randomizes the module load address, so the raw PC above cannot be mapped to a
+      // symbol on its own. The NRO is linked at 0, so logging the runtime address of a known
+      // function yields the load base: base = ANCHOR - <static address of the same symbol>,
+      // and every static address is then (runtime - base).
+      std::fprintf(crash_log, "ANCHOR=%016llx (&__libnx_exception_handler)\n",
+                   static_cast<unsigned long long>(
+                       reinterpret_cast<uintptr_t>(&__libnx_exception_handler)));
+
+      // Frame-pointer backtrace. Dolphin is built at -O3, so leaf frames may be missing, but the
+      // chain is still usually enough to name the caller. Each step is validated: the frame must
+      // be 16-byte aligned and must move strictly upward within a sane stack window, so a corrupt
+      // chain terminates the walk instead of faulting inside the handler.
+      std::fprintf(crash_log, "backtrace:\n");
+      const std::uintptr_t stack_low = static_cast<std::uintptr_t>(ctx->sp.x);
+      const std::uintptr_t stack_high = stack_low + (8u << 20);
+      std::uintptr_t frame = static_cast<std::uintptr_t>(ctx->fp.x);
+      for (int depth = 0; depth < 32; ++depth)
+      {
+        if (frame < stack_low || frame >= stack_high || (frame & 0xf) != 0)
+          break;
+        const std::uintptr_t* frame_words = reinterpret_cast<const std::uintptr_t*>(frame);
+        const std::uintptr_t next_frame = frame_words[0];
+        const std::uintptr_t return_address = frame_words[1];
+        if (return_address == 0)
+          break;
+        std::fprintf(crash_log, "  #%02d %016llx\n", depth,
+                     static_cast<unsigned long long>(return_address));
+        if (next_frame <= frame)
+          break;
+        frame = next_frame;
+      }
+
       std::fflush(crash_log);
       std::fclose(crash_log);
     }
