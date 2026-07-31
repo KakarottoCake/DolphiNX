@@ -119,6 +119,9 @@ bool SwitchMsgAlertHandler(const char* caption, const char* text, bool yes_no,
 {
   const std::string safe_caption = caption && *caption ? caption : "Dolphin";
   const std::string safe_text = text ? text : "Unknown Dolphin error";
+  // Alerts carry the actual reason a boot failed, but they were only ever shown on screen and then
+  // discarded. Mirror them into the startup log so a failure is diagnosable from a file.
+  DolphinSwitch::LogStartupStage(("alert: " + safe_caption + ": " + safe_text).c_str());
   {
     std::lock_guard lock{s_alert_mutex};
     s_pending_alerts.push_back({safe_caption, safe_text});
@@ -581,6 +584,29 @@ SessionResult RunGameSession(const DolphinSwitch::LaunchRequest& request)
   std::atomic_bool ever_running{false};
   s_session_running.store(true, std::memory_order_release);
   auto state_hook = Core::AddOnStateChangedCallback([&ever_running](Core::State state) {
+    // "Core initialized" only means BootCore returned; a title can still die before it ever runs.
+    // Record every transition so the log distinguishes "never started" from "started then stopped".
+    const char* state_name = "unknown";
+    switch (state)
+    {
+    case Core::State::Uninitialized:
+      state_name = "Uninitialized";
+      break;
+    case Core::State::Paused:
+      state_name = "Paused";
+      break;
+    case Core::State::Running:
+      state_name = "Running";
+      break;
+    case Core::State::Stopping:
+      state_name = "Stopping";
+      break;
+    case Core::State::Starting:
+      state_name = "Starting";
+      break;
+    }
+    DolphinSwitch::LogStartupStage((std::string("core state: ") + state_name).c_str());
+
     if (state == Core::State::Running)
       ever_running.store(true, std::memory_order_release);
     if (state == Core::State::Uninitialized)
